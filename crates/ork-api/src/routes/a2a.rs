@@ -14,6 +14,7 @@
 //! because individual handlers reach into the task repo, push repo, registry, and SSE
 //! buffer.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -28,7 +29,9 @@ use ork_a2a::{
 };
 use ork_core::a2a::{AgentContext, CallerIdentity};
 use ork_core::agent_registry::AgentRegistry;
+use ork_core::embeds::EmbedContext;
 use ork_core::ports::a2a_task_repo::{A2aMessageRow, A2aTaskRow};
+use ork_core::streaming::late_embed::LateEmbedResolver;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -446,6 +449,21 @@ async fn handle_message_stream(
         Ok(s) => s,
         Err(e) => return internal_err(env.id, e),
     };
+
+    let embed_ctx = Arc::new(EmbedContext {
+        tenant_id: auth.tenant_id,
+        task_id: Some(task_id),
+        a2a_repo: Some(state.a2a_task_repo.clone()),
+        now: chrono::Utc::now(),
+        variables: HashMap::new(),
+        depth: 0,
+    });
+    let stream = LateEmbedResolver::new(
+        state.embed_registry.clone(),
+        embed_ctx,
+        state.embed_limits.clone(),
+    )
+    .wrap(stream);
 
     let producer = state.eventing.producer.clone();
     let namespace = state.config.kafka.namespace.clone();

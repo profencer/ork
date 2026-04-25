@@ -1,3 +1,4 @@
 adr,title,proposed_at,impl_started_at,impl_done_at,reviewer_findings,reroll_count,notes
 0012,openai-compatible-llm-provider-catalog,2026-04-25,2026-04-25,2026-04-25,15,0,"reviewer Critical #1 rejected as false premise (ADR-0020 owns tenant secret encryption); Critical #2/#3 fixed by threading WorkflowStep overrides end-to-end and adding engine-level precedence test"
 0013,generic-gateway-abstraction,2026-04-24,2026-04-25,2026-04-25,3,0,"gateways: shutdown order + pipeline warn logging + discovery after start; hex boundaries preserved in ork-gateways"
+0015,dynamic-embeds,2026-04-24,2026-04-26,2026-04-26,2,0,"evalexpr math; ork-core embeds+late_embed; ork-api SSE wrap; artifact/secret handlers deferred to ADR-0016/0020/0024"

@@ -71,11 +71,13 @@ log_info "created workflow id=$WF_ID"
 
 # 4. Start a run ----------------------------------------------------------
 TASK_TEXT="${FEDERATION_TASK:-Acme, please outline the rollout plan for the next region.}"
+log_info "input.embed_variables (ADR-0015) sets demo_label for «var:…» in federation-demo's first step"
 RUN_RESP=$(curl -sS -w '\n%{http_code}' \
   -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' \
   -X POST "$BASE_URL/api/workflows/$WF_ID/runs" \
-  -d "$(jq -nc --arg t "$TASK_TEXT" '{input:{task:$t}}')")
+  -d "$(jq -nc --arg t "$TASK_TEXT" \
+    '{input:{task:$t, embed_variables:{demo_label:"ork demo (ADR-0015 embeds)"}}}')")
 RUN_BODY=$(printf '%s' "$RUN_RESP" | sed '$d')
 RUN_CODE=$(printf '%s' "$RUN_RESP" | tail -n1)
 if [[ "$RUN_CODE" != "201" ]]; then

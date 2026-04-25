@@ -17,6 +17,7 @@
 #   - `agent` step  (planner -> list_repos)
 #   - `for_each`    (researcher loop over the planner's output)
 #   - sequential `depends_on` between agent steps
+#   - ADR-0015 dynamic embeds on the first step (`input.embed_variables` + guillemets in the template)
 #
 # LLM dependency: this stage MUST hit a real LLM (planner.prompt produces JSON
 # the rest of the steps depend on). If MINIMAX_API_KEY is unset, we exit 0 with
@@ -103,11 +104,13 @@ log_info "created workflow id=$WF_ID"
 TASK_TEXT="${WORKFLOW_TASK:-Add an opt-in client-side request rate limiter to the Anthropic TypeScript SDK: extend the client constructor with a \\\`requestsPerMinute\\\` option, queue or reject requests that would exceed the budget, and document the new option in the README.}"
 log_info "POST $BASE_URL/api/workflows/$WF_ID/runs"
 log_info "input.task = \"$TASK_TEXT\""
+log_info "input.embed_variables (ADR-0015 «var:…») includes demo_label for the change-plan first step"
 RUN_RESP=$(curl -sS -w '\n%{http_code}' \
   -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' \
   -X POST "$BASE_URL/api/workflows/$WF_ID/runs" \
-  -d "$(jq -nc --arg t "$TASK_TEXT" '{input:{task:$t}}')")
+  -d "$(jq -nc --arg t "$TASK_TEXT" \
+    '{input:{task:$t, embed_variables:{demo_label:"ork kitchen-sink (ADR-0015 embeds)"}}}')")
 RUN_BODY=$(printf '%s' "$RUN_RESP" | sed '$d')
 RUN_CODE=$(printf '%s' "$RUN_RESP" | tail -n1)
 if [[ "$RUN_CODE" != "201" ]]; then

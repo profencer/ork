@@ -1,6 +1,6 @@
 # 0015 — Dynamic embeds
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-04-24
 - **Phase:** 3
 - **Relates to:** 0011, 0013, 0014, 0016
@@ -180,6 +180,14 @@ prompt_template: |
 - Should `«» ` syntax allow nested embeds (e.g. `«artifact_meta:«var:current_artifact»»`)? Decision: yes, but bounded by `max_embed_depth`.
 - Format hint vocabulary across handlers should be standardised. We start with the SAM-aligned set above and add a "format hint" registry as needed.
 - Markdown vs HTML rendering of `artifact_content` — defer the renderer choice to the gateway; embeds emit `Part::Text` with mime hint.
+- **Implementation deferrals (this PR):** `artifact_meta` / `artifact_content` (need ADR-0016 `ArtifactStore`); `secret` (ADR-0020); `reg.register_embed_handler` / public plugin surface (wait for ADR-0024 WASM plugin runtime). `«uuid»` / `«datetime»` with no `:` use `parse_embed_body`’s no-colon branch (type only, empty expr) — see tests.
+
+## Reviewer findings
+
+| Severity | Finding | Resolution |
+| -------- | ------- | ---------- |
+| Major | `«uuid»` bodies lack `:`; original `parse_embed_body` only accepted `type:expr`, so zero-arg embeds were treated as malformed. | Fixed: `parse_embed_body` now accepts a single token (type id, empty expr). |
+| Minor | `resolve_template` lives in `workflow/template.rs`, not `engine.rs`; call chain is from `engine.rs` after `resolve_template()`. | Acknowledged: ADR "Affected" wording left as high-level; implementation wires `resolve_early` at engine call sites. |
 
 ## References
 

@@ -20,3 +20,5 @@ tokio-util = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 futures = { workspace = true }
 cron = { workspace = true }
+evalexpr = { workspace = true }
+async-stream = { workspace = true }

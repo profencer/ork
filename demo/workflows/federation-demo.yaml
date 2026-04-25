@@ -28,6 +28,10 @@ steps:
     prompt_template: >
       Task: {{input.task}}
 
+      Session banner (ADR-0015 dynamic embeds — expanded before the remote agent; values come from
+      run input `embed_variables` plus built-in handlers):
+      run_label=«var:demo_label» | quick_math(12*0.5)=«math:12*0.5 | float» | marker=«uuid:» | when=«datetime: | human»
+
       Please ack and outline the next step.
     depends_on: []
 

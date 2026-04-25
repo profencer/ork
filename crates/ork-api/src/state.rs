@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ork_common::config::AppConfig;
 use ork_core::agent_registry::AgentRegistry;
+use ork_core::embeds::{EmbedLimits, EmbedRegistry};
 use ork_core::ports::a2a_push_repo::A2aPushConfigRepository;
 use ork_core::ports::a2a_task_repo::A2aTaskRepository;
 use ork_core::ports::remote_agent_builder::RemoteAgentBuilder;
@@ -46,4 +47,7 @@ pub struct AppState {
     /// `/.well-known/jwks.json` and the worker's outbound JWS signer. Cached
     /// snapshot is shared so a single rotation propagates to every site.
     pub jwks_provider: Arc<JwksProvider>,
+    /// ADR-0015: late-phase `«type:…»` resolution on the A2A SSE stream.
+    pub embed_registry: Arc<EmbedRegistry>,
+    pub embed_limits: EmbedLimits,
 }

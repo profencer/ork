@@ -7,7 +7,7 @@
       "id": "ask_vendor",
       "agent": "vendor-planner",
       "tools": [],
-      "prompt_template": "Task: {{input.task}}\n\nPlease ack and outline the next step.\n",
+      "prompt_template": "Task: {{input.task}}\n\nSession banner (ADR-0015 dynamic embeds — expanded before the remote agent; values come from run input `embed_variables` plus built-in handlers):\nrun_label=«var:demo_label» | quick_math(12*0.5)=«math:12*0.5 | float» | marker=«uuid:» | when=«datetime: | human»\n\nPlease ack and outline the next step.\n",
       "depends_on": []
     },
     {

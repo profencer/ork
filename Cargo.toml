@@ -79,7 +79,7 @@ octocrab = "0.44"
 # Utilities
 url = "2"
 base64 = "0.22"
-uuid = { version = "1", features = ["v7", "serde"] }
+uuid = { version = "1", features = ["v7", "v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 anyhow = "1"
@@ -95,6 +95,9 @@ clap = { version = "4", features = ["derive"] }
 
 # Scheduling
 cron = "0.15"
+
+# Dynamic embeds (ADR-0015)
+evalexpr = "11.3"
 
 # Eventing / Kafka (pure-Rust client per ADR 0004)
 rskafka = { version = "0.6", default-features = false }

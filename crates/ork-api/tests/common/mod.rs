@@ -491,7 +491,12 @@ pub async fn test_state_with_agents(agent_ids: &[&str]) -> TestState {
     let workflow_repo: Arc<dyn WorkflowRepository> = Arc::new(NoopWorkflowRepository);
     let tenant_service = Arc::new(TenantService::new(Arc::new(StubTenantRepository)));
     let workflow_service = Arc::new(WorkflowService::new(workflow_repo.clone()));
-    let engine = Arc::new(WorkflowEngine::new(workflow_repo, registry.clone()));
+    let embed_registry = Arc::new(ork_core::embeds::EmbedRegistry::with_builtins());
+    let embed_limits = ork_core::embeds::EmbedLimits::default();
+    let engine = Arc::new(
+        WorkflowEngine::new(workflow_repo, registry.clone())
+            .with_embeds(embed_registry.clone(), embed_limits.clone()),
+    );
     let remote_builder: Arc<dyn RemoteAgentBuilder> = Arc::new(StubRemoteAgentBuilder);
 
     let signing_key_repo = Arc::new(InMemorySigningKeyRepo::new());
@@ -523,6 +528,8 @@ pub async fn test_state_with_agents(agent_ids: &[&str]) -> TestState {
         sse_buffer: sse_buffer.clone() as Arc<dyn SseBuffer>,
         push_service: push_service.clone(),
         jwks_provider: jwks_provider.clone(),
+        embed_registry,
+        embed_limits,
     };
 
     TestState {

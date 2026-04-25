@@ -12,6 +12,9 @@ use tracing::{error, info, warn};
 
 use crate::a2a::{AgentContext, AgentEvent, AgentMessage, CallerIdentity, StepLlmOverrides};
 use crate::agent_registry::AgentRegistry;
+use crate::embeds::{
+    EmbedContext, EmbedLimits, EmbedRegistry, embed_variables_from_workflow_input, resolve_early,
+};
 use crate::models::workflow::{
     DelegationSpec, StepResult, StepStatus, WorkflowAgentRef, WorkflowRun, WorkflowRunStatus,
 };
@@ -56,6 +59,9 @@ pub struct WorkflowEngine {
     /// terminal state. `None` disables registration (kept optional so the
     /// existing engine constructors stay usable in unit tests).
     a2a_push_repo: Option<Arc<dyn A2aPushConfigRepository>>,
+    /// ADR-0015: dynamic `«type:…»` embeds on prompts (early phase).
+    embed_registry: Arc<EmbedRegistry>,
+    embed_limits: EmbedLimits,
 }
 
 /// Abstraction for executing agent tools during workflow steps.
@@ -86,6 +92,8 @@ impl WorkflowEngine {
             run_cancel: CancellationToken::new(),
             remote_builder: None,
             a2a_push_repo: None,
+            embed_registry: Arc::new(EmbedRegistry::with_builtins()),
+            embed_limits: EmbedLimits::default(),
         }
     }
 
@@ -125,6 +133,42 @@ impl WorkflowEngine {
     pub fn with_remote_builder(mut self, builder: Arc<dyn RemoteAgentBuilder>) -> Self {
         self.remote_builder = Some(builder);
         self
+    }
+
+    /// Use the same [`EmbedRegistry`] / [`EmbedLimits`] as the API and gateways (one process-wide
+    /// set of handlers and caps).
+    #[must_use]
+    pub fn with_embeds(mut self, registry: Arc<EmbedRegistry>, limits: EmbedLimits) -> Self {
+        self.embed_registry = registry;
+        self.embed_limits = limits;
+        self
+    }
+
+    /// ADR-0015: expand `«type:…»` after `{{…}}` templating, before the LLM or delegation hop.
+    ///
+    /// `«var:…»` reads [`crate::embeds::embed_variables_from_workflow_input`] (from
+    /// `embed_variables` on the run JSON) plus the optional per-call `extra_variables` overlay.
+    async fn resolve_prompt_embeds(
+        &self,
+        tenant_id: TenantId,
+        task_id: Option<ork_a2a::TaskId>,
+        prompt: &str,
+        workflow_input: &Value,
+        extra_variables: &HashMap<String, String>,
+    ) -> Result<String, OrkError> {
+        let mut variables = embed_variables_from_workflow_input(workflow_input);
+        for (k, v) in extra_variables {
+            variables.insert(k.clone(), v.clone());
+        }
+        let ctx = EmbedContext {
+            tenant_id,
+            task_id,
+            a2a_repo: self.a2a_tasks.clone(),
+            now: Utc::now(),
+            variables,
+            depth: 0,
+        };
+        resolve_early(prompt, &ctx, &self.embed_registry, &self.embed_limits).await
     }
 
     pub async fn execute(
@@ -335,7 +379,16 @@ impl WorkflowEngine {
             .for_each
             .as_ref()
             .ok_or_else(|| OrkError::Workflow("internal: for_each step missing template".into()))?;
-        let resolved_list = resolve_template(for_each_tmpl, step_outputs, workflow_input, None);
+        let list_templated = resolve_template(for_each_tmpl, step_outputs, workflow_input, None);
+        let resolved_list = self
+            .resolve_prompt_embeds(
+                tenant_id,
+                None,
+                &list_templated,
+                workflow_input,
+                &HashMap::new(),
+            )
+            .await?;
         let items: Vec<Value> = parse_json_array(&resolved_list)?;
         let var_name = node
             .iteration_var
@@ -417,6 +470,16 @@ impl WorkflowEngine {
         overlay: &HashMap<String, Arc<dyn Agent>>,
     ) -> Result<String, OrkError> {
         let agent = self.resolve_agent(&node.agent, overlay).await?;
+        let step_task_id = ork_a2a::TaskId::new();
+        let prompt = self
+            .resolve_prompt_embeds(
+                tenant_id,
+                Some(step_task_id),
+                prompt,
+                workflow_input,
+                &HashMap::new(),
+            )
+            .await?;
 
         // ADR 0012 §`Selection`: lift WorkflowStep provider/model overrides
         // (already on `node` via the compiler) onto the per-step
@@ -433,7 +496,7 @@ impl WorkflowEngine {
 
         let ctx = AgentContext {
             tenant_id,
-            task_id: ork_a2a::TaskId::new(),
+            task_id: step_task_id,
             parent_task_id: None,
             cancel: self.run_cancel.child_token(),
             caller: CallerIdentity {
@@ -621,15 +684,25 @@ impl WorkflowEngine {
         // ask the shared delegation helper to fork a child off it.
         let mut step_outputs_with_self = step_outputs.clone();
         step_outputs_with_self.insert("this".into(), parent_output.to_string());
-        let prompt = resolve_template(
+        let prompt_templ = resolve_template(
             &spec.prompt_template,
             &step_outputs_with_self,
             &parent_run.input,
             None,
         );
+        let delegate_ctx_task_id = ork_a2a::TaskId::new();
+        let prompt = self
+            .resolve_prompt_embeds(
+                tenant_id,
+                Some(delegate_ctx_task_id),
+                &prompt_templ,
+                &parent_run.input,
+                &HashMap::new(),
+            )
+            .await?;
         let parent_ctx = AgentContext {
             tenant_id,
-            task_id: ork_a2a::TaskId::new(),
+            task_id: delegate_ctx_task_id,
             parent_task_id: parent_run.parent_task_id,
             cancel: self.run_cancel.child_token(),
             caller: CallerIdentity {
@@ -871,6 +944,8 @@ impl WorkflowEngine {
             run_cancel: self.run_cancel.child_token(),
             remote_builder: self.remote_builder.clone(),
             a2a_push_repo: self.a2a_push_repo.clone(),
+            embed_registry: self.embed_registry.clone(),
+            embed_limits: self.embed_limits.clone(),
         };
 
         // Box the recursive `execute` future to break the otherwise-infinite future size.

@@ -1,6 +1,8 @@
 pub mod a2a;
 pub mod agent_registry;
+pub mod embeds;
 pub mod models;
 pub mod ports;
 pub mod services;
+pub mod streaming;
 pub mod workflow;

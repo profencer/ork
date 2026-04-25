@@ -235,6 +235,9 @@ async fn main() -> anyhow::Result<()> {
     // per-run token wired through the workflow service so external `cancel` requests
     // can be honored; for v1 we share one token whose only consumer is process-shutdown.
     let run_cancel = CancellationToken::new();
+    // ADR-0015: one registry + limits for workflow early resolution and API late streaming.
+    let embed_registry = Arc::new(ork_core::embeds::EmbedRegistry::with_builtins());
+    let embed_limits = ork_core::embeds::EmbedLimits::default();
     // ADR-0007: the same `A2aRemoteAgentBuilder` that backs `[[remote_agents]]` and the
     // discovery subscriber is also wired into the workflow engine so
     // `WorkflowAgentRef::Inline` steps build transient agents through the same HTTP
@@ -250,7 +253,8 @@ async fn main() -> anyhow::Result<()> {
             // ADR-0009 ↔ ADR-0006: register `delegate_to.push_url` callbacks
             // so the push delivery worker fans out the child terminal-state
             // notification to the parent's chosen URL.
-            .with_push_repo(a2a_push_repo.clone()),
+            .with_push_repo(a2a_push_repo.clone())
+            .with_embeds(embed_registry.clone(), embed_limits.clone()),
     );
 
     remote_agents::load_static_remote_agents(
@@ -494,6 +498,8 @@ async fn main() -> anyhow::Result<()> {
         sse_buffer,
         push_service,
         jwks_provider,
+        embed_registry,
+        embed_limits,
     };
 
     let gateway_boot =

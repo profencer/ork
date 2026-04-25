@@ -235,7 +235,11 @@ What it does:
 
 What this exercises: `agent` steps, sequential `depends_on`, the
 `for_each` loop in `research_repos`, and the planner's tool plane
-(`list_repos` + `code_search` + `read_file` + `list_tree`).
+(`list_repos` + `code_search` + `read_file` + `list_tree`). The first
+step's prompt also includes **ADR-0015 dynamic embeds** (`«var:…»`,
+`«math:…»`, `«uuid:…»`, `«datetime:…»`): the run passes
+`input.embed_variables.demo_label`, and the engine expands the guillemets
+before the LLM call.
 
 The default `input.task` asks the agents to plan a "client-side request
 rate limiter" feature on the **anthropic-sdk-typescript** repository
@@ -306,7 +310,10 @@ What it does:
    workflow (two steps, both targeting `vendor-planner`), runs it, polls
    until terminal. This exercises ADR 0007 — every "thinking" hop is
    served by the stub peer over JSON-RPC `message/stream` so the demo
-   doesn't burn LLM tokens.
+   doesn't burn LLM tokens. The first step's prompt includes **ADR-0015
+   embeds** (`«var:…»`, `«math:…»`, `«uuid:…»`, `«datetime:…»`) with
+   `input.embed_variables.demo_label`; tail the peer log to see the
+   **expanded** values in `prompt_preview` (not raw `«…»` spans).
 4. Tails `demo/logs/peer-agent.log` to show the request actually arrived
    at the peer.
 
@@ -411,7 +418,7 @@ in [`docs/adrs/0010-mcp-tool-plane.md`](../docs/adrs/0010-mcp-tool-plane.md):
 - Web UI (ADR 0017) — not implemented.
 - Kong / Kafka in front (ADR 0004) — replaced by direct localhost +
   in-memory eventing for the demo.
-- Multi-LLM (0012), gateways (0013), plugins (0014), embeds (0015), artifacts
+- Multi-LLM (0012), gateways (0013), plugins (0014), artifacts
   (0016), DAG enhancements (0018), schedules (0019), RBAC (0021), full
   observability (0022).
 - MCP `resources` / `prompts`, real envelope encryption for MCP secrets,
@@ -488,7 +495,9 @@ demo/
 │   ├── stage-0-bootstrap.sh ... stage-8-teardown.sh
 │   └── lib.sh               # shared helpers (mint-jwt, wait-for, etc.)
 ├── workflows/
-│   └── federation-demo.yaml # used by stage 6
+│   ├── change-plan.json       # stage 4 fallback snapshot (sync with `workflow-templates/change-plan.yaml`)
+│   ├── federation-demo.yaml  # stage 6
+│   └── federation-demo.json  # yq/python fallback for stage 6
 ├── peer-agent/              # stub remote A2A peer (cargo, isolated)
 ├── webhook-receiver/        # push notification receiver (cargo, isolated)
 ├── expected/                # golden output snippets per stage

@@ -184,12 +184,14 @@ fn build_canned_task(state: &AppState, params: &MessageSendParams) -> (Task, Mes
         .unwrap_or_else(ContextId::new);
     let task_id = params.message.task_id.clone().unwrap_or_else(TaskId::new);
 
+    // Longer slice so `demo workflows/federation-demo` (ADR-0015 embeds) is visible
+    // in the log: expanded «math» / «uuid» / etc. should appear, not «…» literals.
     let prompt_preview = first_text(&params.message)
         .unwrap_or_default()
         .chars()
-        .take(120)
+        .take(600)
         .collect::<String>();
-    info!(prompt_preview = %prompt_preview, "vendor-planner replying");
+    info!(prompt_preview = %prompt_preview, "vendor-planner replying (prompt prefix)");
 
     let reply_text = format!(
         "[{}] acknowledged the request. Stub vendor reply.",

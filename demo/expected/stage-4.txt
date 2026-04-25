@@ -1,11 +1,12 @@
 == Stage 4 — Multi-step workflow run ==
 
 [info] yq/PyYAML unavailable — using bundled JSON snapshot /…/demo/workflows/change-plan.json
-[info] compiled /…/workflow-templates/change-plan.yaml to JSON (~2900 bytes)
+[info] compiled /…/workflow-templates/change-plan.yaml to JSON (~3200 bytes)
 [info] POST http://127.0.0.1:8080/api/workflows
 [info] created workflow id=019dc178-3bf6-7241-a15e-90501b6e4cd5
 [info] POST http://127.0.0.1:8080/api/workflows/019dc178…/runs
 [info] input.task = "Add an opt-in client-side request rate limiter to the Anthropic TypeScript SDK: extend the client constructor with a `requestsPerMinute` option, queue or reject requests that would exceed the budget, and document the new option in the README."
+[info] input.embed_variables (ADR-0015 «var:…») includes demo_label for the change-plan first step
 [info] started run id=019dc178-3c1f-7990-b16f-c8a08900b1bd  (status=pending)
 [info] workflow defines 5 step(s); polling /api/runs/019dc178… until terminal
 [info] engine logs: tail -F /…/demo/logs/ork-api.log  (filter for run id 019dc178… for live progress)

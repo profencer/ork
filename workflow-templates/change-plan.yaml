@@ -11,6 +11,9 @@ steps:
     prompt_template: >
       Task: {{input.task}}
 
+      Demo — ADR-0015 dynamic embeds (expanded on the server before the LLM; do not copy these lines into your JSON):
+      run_label=«var:demo_label»  sample=«math:6*7 | int»  when=«datetime: | iso8601»  marker=«uuid:»
+
       Use the list_repos tool output. Pick repositories that are relevant to this task.
       Respond with ONLY valid JSON (no markdown fences) in this shape:
       {"repos":[{"name":"<repo_name>","reason":"<short reason>"}],"query":"<ripgrep search phrase>"}
