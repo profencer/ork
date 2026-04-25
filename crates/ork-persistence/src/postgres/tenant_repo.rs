@@ -104,9 +104,6 @@ impl TenantRepository for PgTenantRepository {
         let mut tenant = self.get_by_id(id).await?;
         let now = Utc::now();
 
-        if let Some(key) = &req.llm_api_key {
-            tenant.settings.llm_api_key_encrypted = Some(key.clone());
-        }
         if let Some(token) = &req.github_token {
             tenant.settings.github_token_encrypted = Some(token.clone());
         }
@@ -121,6 +118,18 @@ impl TenantRepository for PgTenantRepository {
         }
         if let Some(servers) = &req.mcp_servers {
             tenant.settings.mcp_servers = servers.clone();
+        }
+        // ADR 0012: tenant LLM catalog overrides. `None` leaves the
+        // existing list/value untouched; `Some(...)` replaces it
+        // outright (an explicit empty `Vec` clears the catalog).
+        if let Some(providers) = &req.llm_providers {
+            tenant.settings.llm_providers = providers.clone();
+        }
+        if let Some(provider) = &req.default_provider {
+            tenant.settings.default_provider = Some(provider.clone());
+        }
+        if let Some(model) = &req.default_model {
+            tenant.settings.default_model = Some(model.clone());
         }
 
         let settings_json = serde_json::to_value(&tenant.settings)

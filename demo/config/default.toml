@@ -23,10 +23,32 @@ url = "redis://127.0.0.1:6380/"
 jwt_secret = "ork-demo-secret-change-me"
 token_expiry_hours = 24
 
+# OpenAI-compatible LLM provider catalog (ADR 0012). The demo points
+# `default_provider` at minimax because it's the gateway behind the demo's
+# only required secret (`MINIMAX_API_KEY`), but any OpenAI-compatible
+# endpoint drops in by adding another `[[llm.providers]]` block — copy
+# the shape from `config/default.toml`. Per-tenant overrides land in
+# `tenants.settings.llm_providers` (tenant entry with same `id` replaces
+# the operator entry, mirroring `mcp_servers` from ADR 0010).
+#
+# Header values from `{ env = "VAR" }` are sent verbatim — no per-provider
+# prefix munging happens in code (cf. the deleted `MinimaxProvider`, which
+# used to wrap a bare key in `Bearer …`). So `MINIMAX_API_KEY` MUST contain
+# the literal Authorization header value, e.g.
+#   export MINIMAX_API_KEY="Bearer sk-…"
+# A bare key surfaces as `401 Unauthorized — Please carry the API secret
+# key in the 'Authorization' field of the request header (1004)` from
+# Minimax. See `.env.example` for the same warning.
 [llm]
-provider = "minimax"
+default_provider = "minimax"
+
+[[llm.providers]]
+id = "minimax"
 base_url = "https://api.minimax.io/v1"
-model = "MiniMax-M2.7"
+default_model = "MiniMax-M2.7"
+
+[llm.providers.headers]
+Authorization = { env = "MINIMAX_API_KEY" }
 
 [workspace]
 cache_dir = "demo/data/workspaces"

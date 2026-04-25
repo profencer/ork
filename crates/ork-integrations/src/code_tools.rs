@@ -194,10 +194,10 @@ fn repo_name(input: &Value) -> Option<String> {
 }
 
 fn search_query(input: &Value) -> Option<String> {
-    if let Some(q) = input.get("query").and_then(|q| q.as_str()) {
-        if !q.is_empty() {
-            return Some(q.to_string());
-        }
+    if let Some(q) = input.get("query").and_then(|q| q.as_str())
+        && !q.is_empty()
+    {
+        return Some(q.to_string());
     }
     let prompt = input.get("prompt").and_then(|p| p.as_str())?;
     extract_query_from_prompt(prompt)

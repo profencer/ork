@@ -112,9 +112,7 @@ pub async fn execute_one_shot_delegation(
             let now = Utc::now();
             repo.create_task(&A2aTaskRow {
                 id: child_task_id,
-                context_id: parent_ctx
-                    .context_id
-                    .unwrap_or_else(ork_a2a::ContextId::new),
+                context_id: parent_ctx.context_id.unwrap_or_default(),
                 tenant_id: parent_ctx.tenant_id,
                 agent_id: target_id.clone(),
                 parent_task_id: Some(parent_ctx.task_id),
@@ -164,9 +162,7 @@ pub async fn execute_one_shot_delegation(
         let now = Utc::now();
         repo.create_task(&A2aTaskRow {
             id: child_task_id,
-            context_id: parent_ctx
-                .context_id
-                .unwrap_or_else(ork_a2a::ContextId::new),
+            context_id: parent_ctx.context_id.unwrap_or_default(),
             tenant_id: parent_ctx.tenant_id,
             agent_id: target_id.clone(),
             parent_task_id: Some(parent_ctx.task_id),

@@ -175,10 +175,7 @@ async fn change_plan_template_smoke_completes_with_stub_agents() {
         Arc::new(FixedAgent::new("writer", "final markdown")) as Arc<dyn Agent>,
         Arc::new(FixedAgent::new("reviewer", "VERDICT: PASS")) as Arc<dyn Agent>,
     ]);
-    let engine = WorkflowEngine::new(
-        Arc::new(NoopWorkflowRepository::default()),
-        Arc::new(registry),
-    );
+    let engine = WorkflowEngine::new(Arc::new(NoopWorkflowRepository), Arc::new(registry));
     let mut run = WorkflowRun {
         id: WorkflowRunId::new(),
         workflow_id,
@@ -272,6 +269,8 @@ async fn one_step_workflow_completes_with_writer_agent() {
             agent: "writer".into(),
             tools: vec![],
             prompt_template: "ping".into(),
+            provider: None,
+            model: None,
             depends_on: vec![],
             condition: None,
             for_each: None,
@@ -285,10 +284,7 @@ async fn one_step_workflow_completes_with_writer_agent() {
     let graph = compiler::compile(&def).expect("compile");
     let registry =
         AgentRegistry::from_agents(vec![Arc::new(EchoAgent::new("writer")) as Arc<dyn Agent>]);
-    let engine = WorkflowEngine::new(
-        Arc::new(NoopWorkflowRepository::default()),
-        Arc::new(registry),
-    );
+    let engine = WorkflowEngine::new(Arc::new(NoopWorkflowRepository), Arc::new(registry));
 
     let mut run = WorkflowRun {
         id: WorkflowRunId::new(),

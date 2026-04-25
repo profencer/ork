@@ -14,9 +14,9 @@ two new isolated cargo binaries under `demo/peer-agent/` and
 
 ```bash
 # from the repo root
-export MINIMAX_API_KEY=...   # only needed for stage 4
-export GITHUB_TOKEN=...      # only needed for stage 1
-make demo                    # everything: stage 0 -> stage 8
+export MINIMAX_API_KEY="Bearer sk-..."   # literal Authorization header value, only needed for stage 4
+export GITHUB_TOKEN=...                  # only needed for stage 1
+make demo                                # everything: stage 0 -> stage 8
 ```
 
 If you want to drive each stage by hand (recommended for the first run, so
@@ -40,7 +40,7 @@ make demo-down               # stage 8 cleanup
 | `openssl` | mints the demo's HS256 JWT (stage 0) | `openssl version` |
 | `yq` (mikefarah) **or** `python3` + `PyYAML` *(optional)* | YAML → JSON for workflow defs (stages 4 + 6); pre-baked JSON snapshots ship under `demo/workflows/` so the demo runs without either | `yq --version` |
 | Node.js 20+ / `npx` | spawns the MCP `server-everything` child + (stage 5) | `node --version` |
-| `MINIMAX_API_KEY` env var | only LLM provider currently wired in [`crates/ork-api/src/main.rs`](../crates/ork-api/src/main.rs); needed for stage 4 | `echo $MINIMAX_API_KEY` |
+| `MINIMAX_API_KEY` env var | demo's `default_provider` is `minimax` (see [`demo/config/default.toml`](config/default.toml)) and reads its key from this env var. Per [ADR 0012](../docs/adrs/0012-multi-llm-providers.md), header values are sent verbatim — no implicit `Bearer ` prefix — so this MUST be set to the **literal Authorization header value** (e.g. `export MINIMAX_API_KEY="Bearer sk-…"`). A bare key surfaces as `401 Unauthorized — Please carry the API secret key in the 'Authorization' field` from Minimax. Swap in any OpenAI-compatible endpoint by editing `[[llm.providers]]`. Needed for stage 4. | `echo $MINIMAX_API_KEY` |
 | `GITHUB_TOKEN` env var | optional; powers `ork standup` against a real repo (stage 1) | `gh auth status` |
 
 The demo uses host ports `8080` (`ork-api`), `8090` (peer), `8091` (push
@@ -395,14 +395,54 @@ in [`docs/adrs/0010-mcp-tool-plane.md`](../docs/adrs/0010-mcp-tool-plane.md):
 
 ### Known engine gaps surfaced while building the demo
 
-- **`delegate_to:` workflow steps FK-violate `a2a_tasks_parent_task_id_fkey`.**
-  `WorkflowEngine::execute_agent_step` mints a fresh `TaskId` for the parent
-  step but never inserts a row into `a2a_tasks`; the delegation helper then
-  inserts the *child* row with `parent_task_id = <parent.task_id>` and
-  Postgres rejects it. This affects both local- and remote-agent parents.
-  The bundled `change-plan.json` snapshot drops the `delegate_to:` block
-  for that reason; the canonical `workflow-templates/change-plan.yaml` is
-  left untouched so the engine fix can land independently.
+- ~~**`delegate_to:` workflow steps FK-violate `a2a_tasks_parent_task_id_fkey`.**~~
+  Resolved. `WorkflowEngine::execute_agent_step` and
+  `execute_delegated_call` now insert their parent `a2a_tasks` row before
+  the agent runs, so `agent_call` / `peer_*` / `delegate_to:` child
+  inserts satisfy the FK. See
+  `crates/ork-core/tests/engine_persists_parent_task.rs` for the
+  regression. The bundled `change-plan.json` snapshot still drops the
+  `delegate_to:` block on the `review` step for now, but only because the
+  YAML compiler path needs a separate refresh; the canonical
+  `workflow-templates/change-plan.yaml` is otherwise the source of truth
+  again.
+- ~~**Agents `peer_<self>_*`-delegated and tripped the cycle detector mid-step.**~~
+  Resolved. The catalog used to advertise every agent's full peer skill
+  list back to *itself*; an LLM driving e.g. `synthesizer` would then
+  pick `peer_synthesizer_default`, the first hop succeeded, the inner
+  synthesizer made the same call, and the depth-1 chain caught the cycle
+  with `OrkError::Workflow` — a *fatal* error that killed the whole
+  step. Two-part fix: (a) `ToolCatalogBuilder::for_agent` now filters
+  `peer_<self>_*` out of the calling agent's catalog so the LLM never
+  sees self as a peer; (b) `AgentContext::child_for_delegation`
+  cycle/depth rejections moved from `OrkError::Workflow` (fatal) to
+  `OrkError::Validation` (recoverable per ADR-0010), so even if the LLM
+  free-types `agent_call(agent="self")` it gets the error back as a tool
+  result and can self-correct. Regressions:
+  `crates/ork-agents/src/tool_catalog.rs::builder_does_not_advertise_self_peer_tools`
+  and the updated cycle/depth tests in
+  `crates/ork-core/src/a2a/context.rs` /
+  `crates/ork-core/tests/delegation_step_cycle_cap.rs`.
+- ~~**Workflow cascades past a failed step and the demo polling loop times out.**~~
+  Resolved (incident
+  [`docs/incidents/2026-04-25-workflow-cascades-past-failed-step.md`](../docs/incidents/2026-04-25-workflow-cascades-past-failed-step.md)).
+  Three coordinated fixes: (a) the compiler now emits
+  `EdgeCondition::OnPass` for `depends_on` edges, so a failed parent
+  no longer fires its children with bogus `{{parent.output}}` —
+  authors who want a fan-out-on-failure path declare it explicitly via
+  `condition.on_fail`; (b) `WorkflowEngine` step lifecycle `info!` /
+  `warn!` events now carry `run_id`, so `tail -F demo/logs/ork-api.log
+  | jq 'select(.fields.run_id == "...")'` actually filters down to one
+  run; (c) `OpenAiCompatibleProvider::chat_stream` retries once on
+  transient initial-send (`request failed: error sending request for
+  url`, including TCP/TLS reset and 5xx) *and* mid-stream truncation
+  (`stream read failed: error decoding response body`) failures, but
+  only before any SSE event has been forwarded to the consumer and
+  only when the prior attempt was not a 4xx. Initial-send and
+  mid-stream retries share a single `STREAM_MAX_ATTEMPTS = 2`
+  budget. Regressions:
+  `crates/ork-core/tests/engine_failed_step_does_not_cascade.rs` and
+  `crates/ork-llm/tests/openai_compatible_stream_retry.rs`.
 - **`/.well-known/jwks.json` lags behind `admin push rotate-keys`.** The
   `JwksProvider` snapshot inside `ork-api` only refreshes on its own tick;
   the CLI rotates in a separate process. Stage 7 reads the

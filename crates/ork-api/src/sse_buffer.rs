@@ -68,7 +68,7 @@ impl SseBuffer for InMemorySseBuffer {
         g.get(task_id)
             .map(|v| {
                 v.iter()
-                    .filter(|e| after_id.map_or(true, |a| e.id > a))
+                    .filter(|e| after_id.is_none_or(|a| e.id > a))
                     .cloned()
                     .collect()
             })

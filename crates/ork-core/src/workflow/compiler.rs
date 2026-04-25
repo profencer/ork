@@ -23,6 +23,14 @@ pub struct WorkflowNode {
     pub iteration_var: Option<String>,
     /// Optional peer delegation hop after the parent step completes (ADR 0006).
     pub delegate_to: Option<DelegationSpec>,
+    /// ADR 0012 §`Selection`: optional per-step LLM provider override
+    /// (highest precedence). Lifted unchanged from
+    /// [`WorkflowStep::provider`]; the engine threads it onto the
+    /// per-step [`crate::a2a::AgentContext::step_llm_overrides`].
+    pub step_provider: Option<String>,
+    /// ADR 0012 §`Selection`: optional per-step LLM model override.
+    /// Lifted unchanged from [`WorkflowStep::model`].
+    pub step_model: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +84,8 @@ pub fn compile(definition: &WorkflowDefinition) -> Result<CompiledWorkflow, OrkE
             for_each: s.for_each.clone(),
             iteration_var: s.iteration_var.clone(),
             delegate_to: s.delegate_to.clone(),
+            step_provider: s.provider.clone(),
+            step_model: s.model.clone(),
         })
         .collect();
 
@@ -83,10 +93,21 @@ pub fn compile(definition: &WorkflowDefinition) -> Result<CompiledWorkflow, OrkE
 
     for step in &definition.steps {
         for dep in &step.depends_on {
+            // `depends_on` semantically means "I need this step's output";
+            // a failed parent cannot produce that output, so we emit the
+            // edge as `OnPass`. Authors who want a fan-out-on-failure path
+            // declare it explicitly via the parent step's `condition.on_fail`,
+            // which still becomes an `OnFail` edge below. Without this, a
+            // single transient failure on an upstream step would have the
+            // engine fan forward through every downstream step with
+            // unsubstituted prompt templates — see
+            // `docs/incidents/2026-04-25-workflow-cascades-past-failed-step.md`
+            // and the regression in
+            // `crates/ork-core/tests/engine_failed_step_does_not_cascade.rs`.
             edges.push(WorkflowEdge {
                 from: dep.clone(),
                 to: step.id.clone(),
-                condition: Some(EdgeCondition::Always),
+                condition: Some(EdgeCondition::OnPass),
             });
         }
 
@@ -186,6 +207,8 @@ mod tests {
             agent: WorkflowAgentRef::Id("writer".into()),
             tools: vec![],
             prompt_template: "ping".into(),
+            provider: None,
+            model: None,
             depends_on: vec![],
             condition: None,
             for_each: None,
@@ -325,6 +348,25 @@ depends_on: []
             }
             other => panic!("expected Inline, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn step_provider_and_model_propagate_to_node() {
+        // ADR 0012 §`Selection`: the compiler must lift WorkflowStep
+        // provider/model onto the WorkflowNode so the engine can thread
+        // them onto AgentContext.step_llm_overrides.
+        let mut s = step("only", None);
+        s.provider = Some("anthropic".into());
+        s.model = Some("claude-3-5-sonnet".into());
+        let def = make_def(vec![s]);
+        let compiled = compile(&def).expect("compiles");
+        let node = compiled
+            .nodes
+            .iter()
+            .find(|n| n.id == "only")
+            .expect("node");
+        assert_eq!(node.step_provider.as_deref(), Some("anthropic"));
+        assert_eq!(node.step_model.as_deref(), Some("claude-3-5-sonnet"));
     }
 
     #[test]

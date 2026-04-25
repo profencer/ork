@@ -346,11 +346,6 @@ async fn run_change_plan(
         }
     }
 
-    let key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
-    if key.is_empty() {
-        bail!("MINIMAX_API_KEY is required for change-plan (LLM steps).");
-    }
-
     let template_path =
         file.unwrap_or_else(|| PathBuf::from("workflow-templates/change-plan.yaml"));
     let yaml = std::fs::read_to_string(&template_path)
@@ -404,11 +399,24 @@ async fn run_change_plan(
         updated_at: now,
     };
 
-    let llm: Arc<dyn LlmProvider> = Arc::new(ork_llm::minimax::MinimaxProvider::new(
-        key,
-        Some(config.llm.base_url.clone()),
-        Some(config.llm.model.clone()),
-    ));
+    // ADR 0012: build the router from the operator catalog. The CLI has
+    // no tenant database so we plug in `NoopTenantLlmCatalog`. Failure
+    // is fatal here (unlike `standup` which is allowed to degrade) —
+    // change-plan needs the LLM to make progress.
+    if config.llm.providers.is_empty() {
+        bail!(
+            "No LLM providers configured for change-plan.\n\
+             Add at least one [[llm.providers]] entry to config/default.toml \
+             (see ADR 0012 §`Decision`)."
+        );
+    }
+    let llm: Arc<dyn LlmProvider> = Arc::new(
+        ork_llm::router::LlmRouter::from_config(
+            &config.llm,
+            Arc::new(ork_llm::router::NoopTenantLlmCatalog),
+        )
+        .context("ADR 0012: failed to build LlmRouter from [llm] config")?,
+    );
 
     let tool_executor = build_cli_tool_executor(&config)?;
     let card_ctx = ork_core::a2a::card_builder::CardEnrichmentContext {
@@ -425,7 +433,7 @@ async fn run_change_plan(
         tool_executor,
     ));
     let engine = Arc::new(WorkflowEngine::new(
-        Arc::new(NoopWorkflowRepository::default()),
+        Arc::new(NoopWorkflowRepository),
         agent_registry,
     ));
 
@@ -470,15 +478,14 @@ async fn run_change_plan(
         bail!("No write_plan output and no final run output.");
     }
 
-    if verbose {
-        if let Some(review) = run
+    if verbose
+        && let Some(review) = run
             .step_results
             .iter()
             .find(|s| s.step_id == "review")
             .and_then(|s| s.output.as_deref())
-        {
-            eprintln!("\n── reviewer ────────────────────────────────\n{review}");
-        }
+    {
+        eprintln!("\n── reviewer ────────────────────────────────\n{review}");
     }
 
     Ok(())
@@ -541,6 +548,7 @@ fn mask_token(token: &str) -> String {
     format!("{}...{}", &token[..4], &token[token.len() - 4..])
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_standup(
     repos: Vec<String>,
     hours: u64,
@@ -556,7 +564,31 @@ async fn run_standup(
     let gitlab_token = std::env::var("GITLAB_TOKEN").ok();
     let github_url = github_url.or_else(|| std::env::var("GITHUB_BASE_URL").ok());
     let gitlab_url = gitlab_url.or_else(|| std::env::var("GITLAB_BASE_URL").ok());
-    let minimax_key = std::env::var("MINIMAX_API_KEY").ok();
+
+    // ADR 0012: the CLI no longer reads `MINIMAX_API_KEY`. Build the
+    // router from the operator catalog (`config/default.toml`) and only
+    // attempt AI summarisation when at least one provider is configured;
+    // otherwise the standup falls back to raw output. `NoopTenantLlmCatalog`
+    // collapses the resolver to operator-only — there is no tenant
+    // database in the CLI.
+    let app_config = ork_common::config::AppConfig::load().ok();
+    let llm_router: Option<ork_llm::router::LlmRouter> = match app_config.as_ref() {
+        Some(cfg) if !cfg.llm.providers.is_empty() => {
+            match ork_llm::router::LlmRouter::from_config(
+                &cfg.llm,
+                Arc::new(ork_llm::router::NoopTenantLlmCatalog),
+            ) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    if verbose {
+                        eprintln!("LLM router failed to build, raw output only: {e}");
+                    }
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
 
     let use_github = force_github || (!force_gitlab && github_token.is_some());
     let use_gitlab = force_gitlab || (!force_github && gitlab_token.is_some() && !use_github);
@@ -590,10 +622,11 @@ async fn run_standup(
                 .unwrap_or("(not set, using gitlab.com)")
         );
         eprintln!(
-            "  MINIMAX_API_KEY: {}",
-            match &minimax_key {
-                Some(t) => mask_token(t),
-                None => "(not set)".into(),
+            "  LLM router:      {}",
+            if llm_router.is_some() {
+                "configured"
+            } else {
+                "(no providers; raw output only)"
             }
         );
         eprintln!(
@@ -767,10 +800,9 @@ async fn run_standup(
         return Ok(());
     }
 
-    if let Some(api_key) = minimax_key {
+    if let Some(llm) = &llm_router {
         eprintln!("Generating AI standup summary...\n");
 
-        let llm = ork_llm::minimax::MinimaxProvider::new(api_key, None, None);
         let request = ChatRequest {
             messages: vec![
                 ChatMessage::system(STANDUP_SYSTEM_PROMPT),
@@ -783,6 +815,9 @@ async fn run_standup(
             temperature: Some(0.3),
             max_tokens: Some(2048),
             model: None,
+            // ADR 0012: leave provider unset and let the router resolve
+            // through `default_provider`.
+            provider: None,
             tools: Vec::new(),
             tool_choice: None,
         };
@@ -831,7 +866,10 @@ async fn run_standup(
         }
     } else {
         println!("{activity_text}");
-        eprintln!("\nTip: Set MINIMAX_API_KEY to get an AI-generated standup summary.");
+        eprintln!(
+            "\nTip: configure an [[llm.providers]] entry in config/default.toml \
+             (ADR 0012) to get an AI-generated standup summary."
+        );
     }
 
     Ok(())
@@ -927,6 +965,8 @@ mod tests {
             agent: "writer".into(),
             tools: tools.into_iter().map(String::from).collect(),
             prompt_template: prompt.into(),
+            provider: None,
+            model: None,
             depends_on: Vec::new(),
             condition: None,
             for_each: None,

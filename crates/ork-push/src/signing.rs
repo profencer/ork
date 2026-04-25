@@ -207,12 +207,10 @@ impl JwksProvider {
             .max_by_key(|k| k.created_at)
             .cloned();
 
-        if !force {
-            if let Some(ref c) = current {
-                let age = now - c.created_at;
-                if age < Duration::days(i64::from(self.policy.rotation_days)) {
-                    return Ok(None);
-                }
+        if !force && let Some(ref c) = current {
+            let age = now - c.created_at;
+            if age < Duration::days(i64::from(self.policy.rotation_days)) {
+                return Ok(None);
             }
         }
 

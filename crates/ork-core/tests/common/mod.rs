@@ -158,6 +158,8 @@ pub fn one_step_def(
             agent: agent.into(),
             tools: vec![],
             prompt_template: "ping".into(),
+            provider: None,
+            model: None,
             depends_on: vec![],
             condition: None,
             for_each: None,

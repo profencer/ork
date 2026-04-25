@@ -5,12 +5,12 @@ use chrono::Utc;
 use futures::StreamExt;
 use ork_a2a::{AgentCallInput, MessageId, Part, Role, TaskState};
 use ork_common::error::OrkError;
-use ork_common::types::TenantId;
+use ork_common::types::{TenantId, WorkflowRunId};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::a2a::{AgentContext, AgentEvent, AgentMessage, CallerIdentity};
+use crate::a2a::{AgentContext, AgentEvent, AgentMessage, CallerIdentity, StepLlmOverrides};
 use crate::agent_registry::AgentRegistry;
 use crate::models::workflow::{
     DelegationSpec, StepResult, StepStatus, WorkflowAgentRef, WorkflowRun, WorkflowRunStatus,
@@ -164,7 +164,15 @@ impl WorkflowEngine {
                 })?;
 
             let agent_label = node.agent.display_id();
+            // `run_id` lets the demo's `ork-api.log` tail filter (which
+            // greps for the polled run id) actually surface per-step
+            // lifecycle events. Without it, only service-layer create /
+            // start lines made it through the filter, so the timeout
+            // dump was useless when more than one workflow run was in
+            // flight on the engine. Mirrors the field on `step failed`
+            // and `step finished` below.
             info!(
+                run_id = %run.id,
                 step = %node.id,
                 agent = %agent_label,
                 "step started - agent is running"
@@ -173,13 +181,22 @@ impl WorkflowEngine {
             let step_start = Utc::now();
 
             let raw_result = if node.for_each.is_some() {
-                self.execute_for_each_step(tenant_id, node, &step_outputs, &run.input, &overlay)
-                    .await
+                self.execute_for_each_step(
+                    tenant_id,
+                    run.id,
+                    node,
+                    &step_outputs,
+                    &run.input,
+                    &overlay,
+                )
+                .await
             } else {
                 let prompt =
                     resolve_template(&node.prompt_template, &step_outputs, &run.input, None);
-                self.execute_agent_step(tenant_id, &node.agent, &prompt, &run.input, None, &overlay)
-                    .await
+                self.execute_agent_step(
+                    tenant_id, run.id, node, &prompt, &run.input, None, &overlay,
+                )
+                .await
             };
 
             // ADR 0006: optional delegation hop after the parent step succeeds.
@@ -224,7 +241,7 @@ impl WorkflowEngine {
                     }
                 }
                 Err(e) => {
-                    error!(step = %node.id, error = %e, "step failed");
+                    error!(run_id = %run.id, step = %node.id, error = %e, "step failed");
                     StepResult {
                         step_id: node.id.clone(),
                         agent: agent_label.clone(),
@@ -248,6 +265,7 @@ impl WorkflowEngine {
                 .max(0);
             if result.is_ok() {
                 info!(
+                    run_id = %run.id,
                     step = %node.id,
                     agent = %agent_label,
                     elapsed_ms = elapsed_ms,
@@ -306,6 +324,7 @@ impl WorkflowEngine {
     async fn execute_for_each_step(
         &self,
         tenant_id: TenantId,
+        workflow_run_id: WorkflowRunId,
         node: &WorkflowNode,
         step_outputs: &HashMap<String, String>,
         workflow_input: &Value,
@@ -326,6 +345,7 @@ impl WorkflowEngine {
 
         let total = items.len();
         info!(
+            run_id = %workflow_run_id,
             step = %node.id,
             agent = %agent_label,
             iterations = total,
@@ -340,6 +360,7 @@ impl WorkflowEngine {
                 .and_then(|v| v.as_str())
                 .unwrap_or("(item)");
             info!(
+                run_id = %workflow_run_id,
                 step = %node.id,
                 agent = %agent_label,
                 iteration = idx + 1,
@@ -356,7 +377,8 @@ impl WorkflowEngine {
             let text = self
                 .execute_agent_step(
                     tenant_id,
-                    &node.agent,
+                    workflow_run_id,
+                    node,
                     &prompt,
                     workflow_input,
                     Some((var_name.to_string(), item.clone())),
@@ -364,6 +386,7 @@ impl WorkflowEngine {
                 )
                 .await?;
             info!(
+                run_id = %workflow_run_id,
                 step = %node.id,
                 iteration = idx + 1,
                 of = total,
@@ -377,16 +400,36 @@ impl WorkflowEngine {
             .map_err(|e| OrkError::Workflow(format!("serialize for_each outputs: {e}")))
     }
 
+    // ADR 0006 + ADR 0012 + ADR 0018 incrementally added per-step inputs
+    // (workflow_run_id for `a2a_tasks` linkage, iteration for `for_each`,
+    // workflow_input for prompt templating). Splitting them into a struct
+    // would shuffle every test fixture without making the call site
+    // clearer; allow the lint until the engine is folded under a builder.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_agent_step(
         &self,
         tenant_id: TenantId,
-        agent_ref: &WorkflowAgentRef,
+        workflow_run_id: WorkflowRunId,
+        node: &WorkflowNode,
         prompt: &str,
         workflow_input: &Value,
         iteration: Option<(String, Value)>,
         overlay: &HashMap<String, Arc<dyn Agent>>,
     ) -> Result<String, OrkError> {
-        let agent = self.resolve_agent(agent_ref, overlay).await?;
+        let agent = self.resolve_agent(&node.agent, overlay).await?;
+
+        // ADR 0012 §`Selection`: lift WorkflowStep provider/model overrides
+        // (already on `node` via the compiler) onto the per-step
+        // `AgentContext` so `LocalAgent::send_stream` can prefer them over
+        // its own `AgentConfig` defaults when building the `ChatRequest`.
+        // `None` on both fields means "no step-level override active".
+        let step_llm_overrides = match (node.step_provider.as_ref(), node.step_model.as_ref()) {
+            (None, None) => None,
+            _ => Some(StepLlmOverrides {
+                provider: node.step_provider.clone(),
+                model: node.step_model.clone(),
+            }),
+        };
 
         let ctx = AgentContext {
             tenant_id,
@@ -405,7 +448,25 @@ impl WorkflowEngine {
             iteration,
             delegation_depth: 0,
             delegation_chain: Vec::new(),
+            step_llm_overrides,
         };
+
+        // ADR 0006 §`Persistence` / demo `Known engine gaps` regression:
+        // any `agent_call` / `peer_*` / `delegate_to:` the agent makes
+        // below inserts a child a2a_tasks row with
+        // `parent_task_id = ctx.task_id`. If we do not insert the parent
+        // first, Postgres rejects the child with
+        // `a2a_tasks_parent_task_id_fkey`. Persist the parent row here so
+        // the FK holds; we mark it Completed/Failed once the agent stream
+        // finishes.
+        self.persist_parent_task_row(
+            tenant_id,
+            workflow_run_id,
+            agent.id().clone(),
+            &ctx,
+            &node.id,
+        )
+        .await?;
 
         let msg = AgentMessage {
             role: Role::User,
@@ -419,22 +480,102 @@ impl WorkflowEngine {
             metadata: None,
         };
 
-        let mut stream = agent.send_stream(ctx, msg).await?;
+        let parent_task_id = ctx.task_id;
+        let stream_result = agent.send_stream(ctx, msg).await;
         let mut content = String::new();
-        while let Some(ev) = stream.next().await {
-            match ev? {
-                AgentEvent::Message(m) => {
-                    for part in &m.parts {
-                        if let Part::Text { text, .. } = part {
-                            content.push_str(text);
+        let mut errored: Option<OrkError> = None;
+        match stream_result {
+            Ok(mut stream) => {
+                while let Some(ev) = stream.next().await {
+                    match ev {
+                        Ok(AgentEvent::Message(m)) => {
+                            for part in &m.parts {
+                                if let Part::Text { text, .. } = part {
+                                    content.push_str(text);
+                                }
+                            }
+                        }
+                        Ok(AgentEvent::StatusUpdate(_) | AgentEvent::ArtifactUpdate(_)) => {}
+                        Err(e) => {
+                            errored = Some(e);
+                            break;
                         }
                     }
                 }
-                AgentEvent::StatusUpdate(_) | AgentEvent::ArtifactUpdate(_) => {}
+            }
+            Err(e) => errored = Some(e),
+        }
+
+        // Best-effort terminal-state update. If this fails we still surface
+        // the agent outcome — the row stays in `Working` and the engine's
+        // `step_results` table is the source of truth for the workflow.
+        if let Some(repo) = &self.a2a_tasks {
+            let final_state = if errored.is_some() {
+                TaskState::Failed
+            } else {
+                TaskState::Completed
+            };
+            if let Err(e) = repo
+                .update_state(tenant_id, parent_task_id, final_state)
+                .await
+            {
+                warn!(
+                    run_id = %workflow_run_id,
+                    error = %e,
+                    step = %node.id,
+                    task_id = %parent_task_id,
+                    "ADR-0006: failed to update parent a2a_tasks state"
+                );
             }
         }
 
+        if let Some(e) = errored {
+            return Err(e);
+        }
         Ok(content)
+    }
+
+    /// Insert the parent row in `a2a_tasks` for an agent step or
+    /// delegation hop. No-op when the engine was constructed without an
+    /// `A2aTaskRepository` (e.g. CLI / unit tests). Called from
+    /// [`Self::execute_agent_step`] and [`Self::execute_delegated_call`]
+    /// before any code path that may insert a child row referencing
+    /// `parent_task_id = ctx.task_id`.
+    async fn persist_parent_task_row(
+        &self,
+        tenant_id: TenantId,
+        workflow_run_id: WorkflowRunId,
+        agent_id: crate::a2a::AgentId,
+        ctx: &AgentContext,
+        step_id: &str,
+    ) -> Result<(), OrkError> {
+        let Some(repo) = &self.a2a_tasks else {
+            return Ok(());
+        };
+        let now = Utc::now();
+        repo.create_task(&A2aTaskRow {
+            id: ctx.task_id,
+            context_id: ctx.context_id.unwrap_or_default(),
+            tenant_id,
+            agent_id,
+            // The engine-minted parent is the top-level task for this
+            // step — it has no caller-side parent in `a2a_tasks`. Cross-
+            // run linkage (`parent_run.parent_task_id`) is intentionally
+            // dropped here because that id was minted by another engine
+            // run that may not have persisted it; threading the chain
+            // safely is ADR-0008 follow-up territory.
+            parent_task_id: None,
+            workflow_run_id: Some(workflow_run_id),
+            state: TaskState::Working,
+            metadata: serde_json::json!({
+                "step_id": step_id,
+                "source": "workflow.engine",
+            }),
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        })
+        .await
     }
 
     /// Execute a `delegate_to:` hop after the parent step's output is available.
@@ -456,6 +597,7 @@ impl WorkflowEngine {
         //                 `agent:<spec.agent>:delegate` scope of the calling identity.
 
         info!(
+            run_id = %parent_run.id,
             step = %parent_node.id,
             target = %spec.agent,
             await_ = spec.await_,
@@ -502,7 +644,24 @@ impl WorkflowEngine {
             iteration: None,
             delegation_depth: 0,
             delegation_chain: Vec::new(),
+            step_llm_overrides: None,
         };
+
+        // ADR 0006 §`Persistence` / demo `Known engine gaps` regression:
+        // the helper below inserts the *child* row with
+        // `parent_task_id = parent_ctx.task_id`. Without inserting the
+        // parent first, Postgres rejects the child with
+        // `a2a_tasks_parent_task_id_fkey`. Use the synthesized step-agent
+        // id for the row's `agent_id` since this parent context represents
+        // the workflow step's delegation hop, not the delegation target.
+        self.persist_parent_task_row(
+            tenant_id,
+            parent_run.id,
+            parent_node.agent.display_id(),
+            &parent_ctx,
+            &parent_node.id,
+        )
+        .await?;
 
         let input = AgentCallInput {
             agent: spec.agent.clone(),
@@ -546,6 +705,7 @@ impl WorkflowEngine {
             };
             if let Err(e) = repo.upsert(&row).await {
                 warn!(
+                    run_id = %parent_run.id,
                     error = %e,
                     step = %parent_node.id,
                     child_task_id = %outcome.task_id,
@@ -729,7 +889,13 @@ impl WorkflowEngine {
         }
 
         if let Err(e) = exec_result {
-            warn!(child_run_id = %child_run.id, error = %e, "child workflow failed");
+            warn!(
+                run_id = %parent_run.id,
+                step = %parent_node.id,
+                child_run_id = %child_run.id,
+                error = %e,
+                "child workflow failed"
+            );
             return Err(e);
         }
 

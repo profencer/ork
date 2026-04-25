@@ -1,1 +1,2 @@
 adr,title,proposed_at,impl_started_at,impl_done_at,reviewer_findings,reroll_count,notes
+0012,openai-compatible-llm-provider-catalog,2026-04-25,2026-04-25,2026-04-25,15,0,"reviewer Critical #1 rejected as false premise (ADR-0020 owns tenant secret encryption); Critical #2/#3 fixed by threading WorkflowStep overrides end-to-end and adding engine-level precedence test"

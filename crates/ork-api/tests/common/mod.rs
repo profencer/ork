@@ -109,6 +109,7 @@ pub fn test_agent(id: &str) -> Arc<dyn Agent> {
         description: "test".into(),
         system_prompt: "sys".into(),
         tools: vec![],
+        provider: None,
         model: None,
         temperature: 0.0,
         max_tokens: 100,

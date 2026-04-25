@@ -2228,6 +2228,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "chrono",
  "futures",
  "glob",
  "ork-a2a",
@@ -2423,6 +2424,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]

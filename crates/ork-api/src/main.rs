@@ -75,12 +75,20 @@ async fn main() -> anyhow::Result<()> {
         workflow_repo.clone(),
     ));
 
-    let llm_provider: Arc<dyn ork_core::ports::llm::LlmProvider> =
-        Arc::new(ork_llm::minimax::MinimaxProvider::new(
-            std::env::var("MINIMAX_API_KEY").unwrap_or_default(),
-            Some(config.llm.base_url.clone()),
-            Some(config.llm.model.clone()),
-        ));
+    // ADR 0012: the global LLM is the router over the operator-side
+    // catalog (`[llm.providers]` in config). Tenant overrides are
+    // resolved per-call through `ServiceTenantLlmCatalog`, which wraps
+    // `TenantService` so `ork-llm` does not import `ork-persistence`
+    // (AGENTS.md §3.4 hexagonal). Boot fails loud if any `env`-form
+    // header references a variable that isn't set — operators learn
+    // about a typo before the first request, not after.
+    let llm_catalog: Arc<dyn ork_llm::router::TenantLlmCatalog> = Arc::new(
+        ork_api::llm_catalog::ServiceTenantLlmCatalog::new(tenant_service.clone()),
+    );
+    let llm_provider: Arc<dyn ork_core::ports::llm::LlmProvider> = Arc::new(
+        ork_llm::router::LlmRouter::from_config(&config.llm, llm_catalog)
+            .context("ADR 0012: failed to build LlmRouter from [llm] config")?,
+    );
 
     let mut integration_executor = ork_integrations::tools::IntegrationToolExecutor::new();
 

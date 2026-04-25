@@ -30,6 +30,7 @@ fn cfg(id: &str) -> AgentConfig {
         description: "test".into(),
         system_prompt: "sys".into(),
         tools: vec![],
+        provider: None,
         model: None,
         temperature: 0.0,
         max_tokens: 100,

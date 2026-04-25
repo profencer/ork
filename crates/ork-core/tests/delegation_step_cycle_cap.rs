@@ -2,9 +2,13 @@
 //!
 //! Depth cap and cycle detection live in [`AgentContext::child_for_delegation`]; the
 //! shared [`execute_one_shot_delegation`] helper bubbles those errors back out so
-//! both the `agent_call` tool and the engine see the same `OrkError::Workflow`
-//! string. The engine's per-step `delegate_to` always starts at depth 0, so the
-//! integration test exercises the helper directly with a pre-saturated context.
+//! both the `agent_call` tool and the engine see the same `OrkError::Validation`
+//! string. ADR-0010 §`Tool error semantics` requires these to be recoverable
+//! (`Validation`) rather than fatal (`Workflow`) so a mis-routed tool call by
+//! the LLM doesn't kill the whole step — the LLM gets the error back as a
+//! tool result and can pick a different target. The engine's per-step
+//! `delegate_to` always starts at depth 0, so the integration test exercises
+//! the helper directly with a pre-saturated context.
 
 mod common;
 
@@ -38,11 +42,12 @@ fn root_ctx(tenant: TenantId) -> AgentContext {
         iteration: None,
         delegation_depth: 0,
         delegation_chain: Vec::new(),
+        step_llm_overrides: None,
     }
 }
 
 #[tokio::test]
-async fn delegating_above_max_depth_returns_workflow_error() {
+async fn delegating_above_max_depth_returns_recoverable_validation_error() {
     let tenant = TenantId(Uuid::nil());
     let registry = AgentRegistry::from_agents(vec![echo_agent_with_prefix("target", "t:")]);
 
@@ -65,18 +70,18 @@ async fn delegating_above_max_depth_returns_workflow_error() {
     let res = execute_one_shot_delegation(&ctx, &registry, None, None, None, input).await;
     match res {
         Ok(_) => panic!("delegation must reject above the cap"),
-        Err(OrkError::Workflow(msg)) => {
+        Err(OrkError::Validation(msg)) => {
             assert!(
                 msg.contains("max_delegation_depth"),
                 "error must mention the cap; got: {msg}"
             );
         }
-        Err(other) => panic!("expected Workflow error, got {other:?}"),
+        Err(other) => panic!("expected Validation error (recoverable per ADR-0010), got {other:?}"),
     }
 }
 
 #[tokio::test]
-async fn delegating_to_agent_already_in_chain_is_rejected_as_cycle() {
+async fn delegating_to_agent_already_in_chain_is_rejected_as_recoverable_cycle() {
     let tenant = TenantId(Uuid::nil());
     let registry = AgentRegistry::from_agents(vec![echo_agent_with_prefix("planner", "p:")]);
 
@@ -96,12 +101,12 @@ async fn delegating_to_agent_already_in_chain_is_rejected_as_cycle() {
     let res = execute_one_shot_delegation(&ctx, &registry, None, None, None, input).await;
     match res {
         Ok(_) => panic!("delegation must detect the cycle"),
-        Err(OrkError::Workflow(msg)) => {
+        Err(OrkError::Validation(msg)) => {
             assert!(
                 msg.to_lowercase().contains("cycle"),
                 "error must mention cycle; got: {msg}"
             );
         }
-        Err(other) => panic!("expected Workflow error, got {other:?}"),
+        Err(other) => panic!("expected Validation error (recoverable per ADR-0010), got {other:?}"),
     }
 }

@@ -275,11 +275,17 @@ impl AgentRegistry {
 
     /// Per-peer tool surface for the LLM (ADR 0006 §`LLM tool surface`).
     ///
-    /// Walks every known card (local + non-expired remote) and emits one
+    /// Walks every known agent (local + non-expired remote) and emits one
     /// [`PeerToolDescription`] per `AgentSkill`, plus a generic `agent_call` entry as the
-    /// fallback for unstructured cases. ADR 0011 will consume these via a tool-calling
-    /// loop; until it lands this function has no in-tree caller, but pinning the shape
-    /// here means ADR 0011 needs no registry change.
+    /// fallback for unstructured cases. ADR 0006 §`LLM tool surface` consumes these via
+    /// the tool-catalog builder.
+    ///
+    /// **Important — agent-id source.** The `peer_<…>_<…>` tool name uses the registry's
+    /// `AgentId` (the key under which the agent was registered), **not** `card.name`.
+    /// The two diverge in practice — for the demo agents `id = "synthesizer"` while
+    /// `card.name = "Synthesizer"` — and the dispatch side looks up agents by id, so
+    /// using `card.name` produced tool names the executor could never resolve. The
+    /// human-readable card name still feeds the description string.
     pub async fn peer_tool_descriptions(&self) -> Vec<PeerToolDescription> {
         let mut out = Vec::new();
         out.push(PeerToolDescription {
@@ -290,27 +296,66 @@ impl AgentRegistry {
             skill_id: None,
         });
 
-        for card in self.local.values().map(|a| a.card().clone()) {
-            push_skills(&mut out, &card);
+        for (id, agent) in &self.local {
+            push_skills(&mut out, id, agent.card());
         }
         let guard = self.remote.read().await;
-        for entry in guard.values() {
-            push_skills(&mut out, &entry.card);
+        for (id, entry) in guard.iter() {
+            push_skills(&mut out, id, &entry.card);
         }
         out
     }
+
+    /// Reverse-lookup for the `peer_<agent_id>_<skill_id>` tool surface. Returns the
+    /// matching [`PeerToolDescription`] (carrying the resolved `target_agent_id` and
+    /// `skill_id`) or `None` if no registered agent advertises a skill that maps to
+    /// `name`. Local agents win over remote on collisions, mirroring [`Self::resolve`].
+    ///
+    /// Used by the composite tool executor's `peer_*` arm to translate the LLM's tool
+    /// name into an `AgentCallInput.agent` without parsing the underscore-separated
+    /// name (skill ids may legally contain underscores, so string-splitting is unsafe).
+    pub async fn resolve_peer_tool(&self, name: &str) -> Option<PeerToolDescription> {
+        for (id, agent) in &self.local {
+            if let Some(desc) = peer_descriptor_for(id, agent.card(), name) {
+                return Some(desc);
+            }
+        }
+        let guard = self.remote.read().await;
+        for (id, entry) in guard.iter() {
+            if let Some(desc) = peer_descriptor_for(id, &entry.card, name) {
+                return Some(desc);
+            }
+        }
+        None
+    }
 }
 
-fn push_skills(out: &mut Vec<PeerToolDescription>, card: &AgentCard) {
-    let agent_id = card.name.clone();
+fn push_skills(out: &mut Vec<PeerToolDescription>, agent_id: &AgentId, card: &AgentCard) {
     for skill in &card.skills {
         out.push(PeerToolDescription {
             name: format!("peer_{agent_id}_{}", skill.id),
-            description: format!("[{agent_id}/{}] {}", skill.name, skill.description),
+            description: format!("[{}/{}] {}", card.name, skill.name, skill.description),
             target_agent_id: Some(agent_id.clone()),
             skill_id: Some(skill.id.clone()),
         });
     }
+}
+
+/// Returns the descriptor for `name` if some skill on `card` maps to it under `agent_id`.
+fn peer_descriptor_for(
+    agent_id: &AgentId,
+    card: &AgentCard,
+    name: &str,
+) -> Option<PeerToolDescription> {
+    let prefix = format!("peer_{agent_id}_");
+    let skill_id = name.strip_prefix(&prefix)?;
+    let skill = card.skills.iter().find(|s| s.id == skill_id)?;
+    Some(PeerToolDescription {
+        name: name.to_string(),
+        description: format!("[{}/{}] {}", card.name, skill.name, skill.description),
+        target_agent_id: Some(agent_id.clone()),
+        skill_id: Some(skill.id.clone()),
+    })
 }
 
 /// One LLM-facing tool entry derived from an [`AgentCard`] skill (ADR 0006 §`LLM tool
@@ -497,6 +542,66 @@ mod tests {
             .expect("per-skill entry present");
         assert_eq!(skill_entry.target_agent_id.as_deref(), Some("researcher"));
         assert_eq!(skill_entry.skill_id.as_deref(), Some("default"));
+    }
+
+    /// Pre-fix `push_skills` derived the agent id portion of the tool name from
+    /// `card.name`, but the registry stores agents under the lowercase `AgentId`
+    /// (e.g. local demo agents have `id = "synthesizer"` and `card.name =
+    /// "Synthesizer"`). The catalog produced `peer_Synthesizer_*` while the
+    /// dispatcher could only resolve `peer_synthesizer_*`, so the LLM picked
+    /// the advertised tool and the executor returned `unknown tool: …`. This
+    /// test pins the registry-id-as-source contract.
+    #[tokio::test]
+    async fn peer_tool_name_uses_registry_id_not_card_display_name() {
+        let reg = AgentRegistry::new();
+        // card.name is intentionally cased differently from the registry key.
+        let card = sample_card("Synthesizer", None, Some("https://example.com/s"));
+        reg.upsert_remote("synthesizer".into(), entry_for(&card))
+            .await;
+
+        let tools = reg.peer_tool_descriptions().await;
+        assert!(
+            tools.iter().any(|t| t.name == "peer_synthesizer_default"),
+            "expected `peer_<registry_id>_<skill_id>`, got {:?}",
+            tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
+        );
+        assert!(
+            !tools
+                .iter()
+                .any(|t| t.name.starts_with("peer_Synthesizer_")),
+            "tool name must not echo card.name; it has to match how the registry indexes the agent"
+        );
+
+        // Reverse lookup must also key off the registry id.
+        let resolved = reg
+            .resolve_peer_tool("peer_synthesizer_default")
+            .await
+            .expect("resolves via registry id");
+        assert_eq!(resolved.target_agent_id.as_deref(), Some("synthesizer"));
+        assert_eq!(resolved.skill_id.as_deref(), Some("default"));
+        assert!(
+            reg.resolve_peer_tool("peer_Synthesizer_default")
+                .await
+                .is_none()
+        );
+    }
+
+    /// Skill ids may contain underscores (e.g. `mcp_atlassian_search`); the
+    /// resolver must therefore prefix-match `peer_<agent_id>_` rather than
+    /// splitting on `_`.
+    #[tokio::test]
+    async fn resolve_peer_tool_handles_skill_ids_with_underscores() {
+        let reg = AgentRegistry::new();
+        let mut card = sample_card("worker", None, Some("https://example.com/w"));
+        card.skills[0].id = "do_a_thing".into();
+        reg.upsert_remote("worker".into(), entry_for(&card)).await;
+
+        let resolved = reg
+            .resolve_peer_tool("peer_worker_do_a_thing")
+            .await
+            .expect("resolves with multi-underscore skill id");
+        assert_eq!(resolved.target_agent_id.as_deref(), Some("worker"));
+        assert_eq!(resolved.skill_id.as_deref(), Some("do_a_thing"));
     }
 
     #[tokio::test]

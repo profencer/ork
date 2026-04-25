@@ -110,7 +110,7 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0009](0009-push-notifications.md) | Push notifications and webhook signing | Proposed | 2 |
 | [0010](0010-mcp-tool-plane.md) | MCP as the canonical external tool plane | Accepted | 3 |
 | [0011](0011-native-llm-tool-calling.md) | Native LLM tool-calling | Accepted | 3 |
-| [0012](0012-multi-llm-providers.md) | Multi-LLM provider abstraction | Proposed | 3 |
+| [0012](0012-multi-llm-providers.md) | OpenAI-compatible LLM provider catalog | Accepted | 3 |
 | [0013](0013-generic-gateway-abstraction.md) | Generic Gateway abstraction | Proposed | 3 |
 | [0014](0014-plugin-system.md) | Plugin system | Proposed | 3 |
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Proposed | 3 |
@@ -189,7 +189,7 @@ Each ADR carries its own detailed `Mapping to SAM` section. The matrix below is 
 | [0009](0009-push-notifications.md) | `common/utils/push_notification_auth.py` |
 | [0010](0010-mcp-tool-plane.md) | SAM `MCPToolset` and remote-tool plumbing |
 | [0011](0011-native-llm-tool-calling.md) | ADK-native tool calling inside `SamAgentComponent` |
-| [0012](0012-multi-llm-providers.md) | SAM litellm-style multi-provider config |
+| [0012](0012-multi-llm-providers.md) | SAM litellm-style multi-provider config (handled out-of-process via Kong + GPUStack) |
 | [0013](0013-generic-gateway-abstraction.md) | `gateway/generic/component.py` |
 | [0014](0014-plugin-system.md) | `sam plugin` SDK + plugin manifest |
 | [0015](0015-dynamic-embeds.md) | SAM `«type:expression»` resolver pipeline |

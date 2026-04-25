@@ -1,32 +1,47 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
 use ork_common::error::OrkError;
 use ork_common::types::TenantId;
 use ork_core::ports::workspace::{CodeSearchHit, RepoWorkspace, RepositorySpec};
 use serde_json::Value;
+use tokio::sync::Mutex as TokioMutex;
 use tracing::info;
 
 /// Expand a leading `~/` using `$HOME`.
 pub fn expand_cache_dir(path: &str) -> PathBuf {
     let path = path.trim();
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(rest);
     }
     PathBuf::from(path)
 }
 
 /// Local shallow clones (`git` CLI) + ripgrep-backed search.
+///
+/// Concurrency: tool catalogues frequently expose `code_search`, `read_file`,
+/// `list_tree` together, and the LLM happily fires several of them in parallel
+/// against the same repo on the same turn. Each call goes through
+/// [`GitRepoWorkspace::ensure_clone`], which without serialisation would race
+/// inside [`ensure_clone_inner`] — both callers see no `.git`, both invoke
+/// `git clone`, the second one fails with `git`'s `fatal: could not create
+/// work tree dir '...': File exists` (exit 128). To dodge that we keep a
+/// per-clone-path async [`tokio::sync::Mutex`] in [`Self::clone_locks`] and
+/// hold it across the `spawn_blocking` that runs `ensure_clone_inner`. The
+/// outer [`std::sync::Mutex`] only guards map insertion (held for microseconds);
+/// the contended one is the per-path inner mutex.
 #[derive(Clone)]
 pub struct GitRepoWorkspace {
     cache_dir: PathBuf,
     clone_depth: u32,
     specs: Vec<RepositorySpec>,
+    clone_locks: Arc<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>>,
 }
 
 impl GitRepoWorkspace {
@@ -35,7 +50,22 @@ impl GitRepoWorkspace {
             cache_dir,
             clone_depth,
             specs,
+            clone_locks: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    /// Per-path mutex for [`Self::ensure_clone`]. Cheap to hold the outer
+    /// std::Mutex across the `entry().or_insert_with()` call because we never
+    /// `.await` while it's locked.
+    fn clone_lock(&self, path: &Path) -> Arc<TokioMutex<()>> {
+        let mut guard = self
+            .clone_locks
+            .lock()
+            .expect("clone_locks std::Mutex poisoned");
+        guard
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone()
     }
 
     fn repo_path(&self, tenant_id: TenantId, name: &str) -> Result<PathBuf, OrkError> {
@@ -67,6 +97,13 @@ impl RepoWorkspace for GitRepoWorkspace {
         let spec = self.spec(name)?.clone();
         let depth = self.clone_depth;
 
+        // Hold the per-path mutex across the spawn_blocking so concurrent
+        // `code_search` / `read_file` / `list_tree` calls for the same repo
+        // serialise on the clone/fetch step instead of stepping on each
+        // other inside `git`.
+        let lock = self.clone_lock(&path);
+        let _guard = lock.lock().await;
+
         tokio::task::spawn_blocking(move || {
             ensure_clone_inner(&path_for_task, &spec.url, &spec.default_branch, depth)
         })
@@ -89,7 +126,7 @@ impl RepoWorkspace for GitRepoWorkspace {
         let root = self.ensure_clone(tenant_id, name).await?;
         let root_path = PathBuf::from(root);
         let q = query.to_string();
-        let max = top_k.max(1).min(500);
+        let max = top_k.clamp(1, 500);
 
         tokio::task::spawn_blocking(move || run_ripgrep(&root_path, &q, max))
             .await
@@ -106,7 +143,7 @@ impl RepoWorkspace for GitRepoWorkspace {
         let root = self.ensure_clone(tenant_id, name).await?;
         let root_path = PathBuf::from(root);
         let rel = path.to_string();
-        let cap = max_bytes.max(256).min(2 * 1024 * 1024);
+        let cap = max_bytes.clamp(256, 2 * 1024 * 1024);
 
         tokio::task::spawn_blocking(move || read_file_inner(&root_path, &rel, cap))
             .await
@@ -123,7 +160,7 @@ impl RepoWorkspace for GitRepoWorkspace {
         let root = self.ensure_clone(tenant_id, name).await?;
         let root_path = PathBuf::from(root);
         let prefix = prefix.to_string();
-        let max = max_entries.max(1).min(10_000);
+        let max = max_entries.clamp(1, 10_000);
 
         tokio::task::spawn_blocking(move || list_tree_inner(&root_path, &prefix, max))
             .await
@@ -187,7 +224,7 @@ fn ensure_clone_inner(path: &Path, url: &str, branch: &str, depth: u32) -> Resul
         std::fs::create_dir_all(parent).map_err(|e| OrkError::Integration(e.to_string()))?;
     }
 
-    let status = git_cmd()
+    let output = git_cmd()
         .args([
             "clone",
             "--depth",
@@ -197,16 +234,18 @@ fn ensure_clone_inner(path: &Path, url: &str, branch: &str, depth: u32) -> Resul
             url,
             path_str,
         ])
-        .status()
+        .output()
         .map_err(|e| {
             OrkError::Integration(format!(
                 "failed to run `git clone` (is `git` installed?): {e}"
             ))
         })?;
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(OrkError::Integration(format!(
-            "`git clone` exited with {:?}",
-            status.code()
+            "`git clone {url} -> {path_str}` exited with {:?}: {}",
+            output.status.code(),
+            stderr.trim()
         )));
     }
     Ok(())

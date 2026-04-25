@@ -23,9 +23,8 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use ork_a2a::{
-    A2aMethod, AgentCard, ContextId, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    Message as A2aMessage, MessageSendParams, Part, Role, SendMessageResult, Task, TaskId,
-    TaskState, TaskStatus,
+    A2aMethod, AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
+    MessageSendParams, Part, Role, SendMessageResult, Task, TaskId, TaskState, TaskStatus,
 };
 use ork_core::a2a::{AgentContext, CallerIdentity};
 use ork_core::agent_registry::AgentRegistry;
@@ -235,7 +234,7 @@ async fn handle_message_send(
     };
 
     let task_id = TaskId::new();
-    let context_id = params.message.context_id.unwrap_or_else(ContextId::new);
+    let context_id = params.message.context_id.unwrap_or_default();
     let now = chrono::Utc::now();
 
     if let Err(e) = state
@@ -297,6 +296,7 @@ async fn handle_message_send(
         iteration: None,
         delegation_depth: 0,
         delegation_chain: Vec::new(),
+        step_llm_overrides: None,
     };
 
     let result = agent.send(ctx, inbound).await;
@@ -379,7 +379,7 @@ async fn handle_message_stream(
     };
 
     let task_id = TaskId::new();
-    let context_id = params.message.context_id.unwrap_or_else(ContextId::new);
+    let context_id = params.message.context_id.unwrap_or_default();
     let now = chrono::Utc::now();
 
     if let Err(e) = state
@@ -438,6 +438,7 @@ async fn handle_message_stream(
         iteration: None,
         delegation_depth: 0,
         delegation_chain: Vec::new(),
+        step_llm_overrides: None,
     };
 
     let id = env.id.clone();
@@ -507,7 +508,7 @@ async fn handle_message_stream(
             Ok::<_, std::convert::Infallible>(
                 Event::default()
                     .id(event_seq.to_string())
-                    .data(String::from_utf8_lossy(&payload).into_owned()),
+                    .data(String::from_utf8_lossy(&payload)),
             )
         }
     });
@@ -610,7 +611,7 @@ async fn handle_stream_replay(
         .map(|e| {
             Event::default()
                 .id(e.id.to_string())
-                .data(String::from_utf8_lossy(&e.payload).into_owned())
+                .data(String::from_utf8_lossy(&e.payload))
         })
         .collect();
 
@@ -618,9 +619,8 @@ async fn handle_stream_replay(
     let live = match state.eventing.consumer.subscribe(&topic).await {
         Ok(s) => s
             .filter_map(|res| async move {
-                res.ok().map(|m| {
-                    Event::default().data(String::from_utf8_lossy(&m.payload).into_owned())
-                })
+                res.ok()
+                    .map(|m| Event::default().data(String::from_utf8_lossy(&m.payload)))
             })
             .boxed(),
         Err(_) => stream::empty().boxed(),
@@ -703,6 +703,7 @@ async fn handle_tasks_cancel(
             iteration: None,
             delegation_depth: 0,
             delegation_chain: Vec::new(),
+            step_llm_overrides: None,
         };
         if let Err(e) = agent.cancel(ctx, &params.id).await
             && !matches!(e, ork_common::error::OrkError::Unsupported(_))
@@ -898,6 +899,7 @@ async fn handle_push_get(
 /// Decode the typed `params` for an A2A method, returning a ready-to-send
 /// `INVALID_PARAMS` (`-32602`) error response on failure. Handlers use the
 /// `Result<P, Response>` pattern: `let params = parse_params(&env)?;`-style.
+#[allow(clippy::result_large_err)]
 fn parse_params<P: serde::de::DeserializeOwned>(
     env: &JsonRpcRequest<serde_json::Value>,
 ) -> Result<P, axum::response::Response> {
@@ -1005,10 +1007,7 @@ async fn build_task_response_with_limit(
         .list_messages(auth.tenant_id, task_id, history_length)
         .await
         .unwrap_or_default();
-    let context_id = row
-        .as_ref()
-        .map(|r| r.context_id)
-        .unwrap_or_else(ContextId::new);
+    let context_id = row.as_ref().map(|r| r.context_id).unwrap_or_default();
     let history: Vec<A2aMessage> = messages
         .into_iter()
         .map(|m| A2aMessage {

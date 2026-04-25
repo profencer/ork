@@ -90,9 +90,11 @@ impl KeyValueCache for RedisCache {
 /// In-process [`KeyValueCache`] for tests and ergonomic local dev. TTLs are
 /// stored alongside the value and checked on read; expired keys are removed
 /// lazily on access.
+type InMemoryEntry = (Vec<u8>, std::time::Instant);
+
 #[derive(Clone, Default)]
 pub struct InMemoryCache {
-    inner: Arc<Mutex<HashMap<String, (Vec<u8>, std::time::Instant)>>>,
+    inner: Arc<Mutex<HashMap<String, InMemoryEntry>>>,
 }
 
 impl InMemoryCache {

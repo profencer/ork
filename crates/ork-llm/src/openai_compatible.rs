@@ -1,5 +1,14 @@
-//! OpenAI-compatible chat completions provider — used as the reference impl
-//! for ADR 0011 native tool-calling on the OpenAI wire shape.
+//! Generic OpenAI Chat Completions wire client (ADR 0012 §`Decision`).
+//!
+//! Drop-in replacement for the deleted `crates/ork-llm/src/minimax.rs` — every
+//! byte of the SSE parser, [`ToolCallAggregator`], and OpenAI request/response
+//! serde shapes was lifted across without behaviour change. The only thing
+//! that moved is the constructor surface: instead of a hard-coded
+//! `MINIMAX_API_KEY` env-var read we accept an arbitrary header map plus a
+//! base URL, both pre-resolved by [`crate::router::LlmRouter`] from the
+//! operator/tenant catalog. The provider id ("openai", "anthropic", "minimax",
+//! …) is also caller-supplied so [`LlmProvider::provider_name`] reflects the
+//! catalog entry, not a hard-coded vendor name.
 //!
 //! Tool-call wire shape (OpenAI compatible):
 //!
@@ -11,40 +20,160 @@
 //!   arguments?}}]` interleaved across chunks; we aggregate per-`index` slot
 //!   and emit one [`ChatStreamEvent::ToolCall`] when the slot's `arguments`
 //!   parses as JSON or when `finish_reason = "tool_calls"` arrives.
-//!
-//! Other OpenAI-compatible providers (per ADR 0012) can reuse the
-//! aggregator + serde shapes here once they're factored into a shared module
-//! — out of scope for this PR series.
+
+use std::collections::HashMap;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
+use ork_common::config::ModelCapabilitiesEntry;
 use ork_common::error::OrkError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use ork_core::ports::llm::{
     ChatMessage, ChatRequest, ChatResponse, ChatStreamEvent, FinishReason, LlmChatStream,
-    LlmProvider, MessageRole, TokenUsage, ToolCall, ToolChoice, ToolDescriptor,
+    LlmProvider, MessageRole, ModelCapabilities, TokenUsage, ToolCall, ToolChoice, ToolDescriptor,
 };
 
-pub struct MinimaxProvider {
+/// OpenAI-compatible chat-completions client. The provider id is whatever
+/// [`crate::router::LlmRouter`] passed in (the catalog entry's `id`); base
+/// URL and headers are pre-resolved (env vars already looked up at boot per
+/// the ADR's "fail loud at boot" rule).
+#[derive(Debug)]
+pub struct OpenAiCompatibleProvider {
     client: Client,
+    /// Catalog id ("openai", "anthropic", …). Surfaced verbatim through
+    /// [`LlmProvider::provider_name`].
+    provider_id: String,
     base_url: String,
-    api_key: String,
-    default_model: String,
+    /// Header map applied to every chat / chat_stream request. Each entry
+    /// is fed straight into reqwest's `header()` builder; HTTP itself
+    /// treats header names case-insensitively (and HTTP/2 lowercases on
+    /// the wire), so the catalog YAML / TOML can spell `Authorization`,
+    /// `authorization`, or `AUTHORIZATION` interchangeably.
+    headers: HashMap<String, String>,
+    default_model: Option<String>,
+    /// Per-model capability table. Empty ⇒ fall back to
+    /// [`ModelCapabilities::default`] for any lookup.
+    capabilities: Vec<ModelCapabilitiesEntry>,
 }
 
-impl MinimaxProvider {
-    pub fn new(api_key: String, base_url: Option<String>, model: Option<String>) -> Self {
+impl OpenAiCompatibleProvider {
+    /// Construct a fully-resolved provider. Caller is expected to have
+    /// already turned `{ env = "FOO" }` header values into literal strings
+    /// (the router does this once at boot — see
+    /// [`crate::router::LlmRouter::from_config`]). `default_model` is
+    /// the per-provider fallback used when the request, agent, step and
+    /// tenant defaults are all `None`.
+    #[must_use]
+    pub fn new(
+        provider_id: impl Into<String>,
+        base_url: impl Into<String>,
+        default_model: Option<String>,
+        headers: HashMap<String, String>,
+        capabilities: Vec<ModelCapabilitiesEntry>,
+    ) -> Self {
         Self {
             client: Client::new(),
-            base_url: base_url.unwrap_or_else(|| "https://api.minimax.io/v1".into()),
-            api_key,
-            default_model: model.unwrap_or_else(|| "MiniMax-M2.5".into()),
+            provider_id: provider_id.into(),
+            base_url: base_url.into(),
+            headers,
+            default_model,
+            capabilities,
         }
     }
+
+    /// Apply this provider's resolved header set to a `reqwest::RequestBuilder`.
+    fn apply_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (k, v) in &self.headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+        req
+    }
+}
+
+/// Maximum number of HTTP attempts (initial + retries) for a streaming
+/// chat completion. Set to **2** so a single transient mid-stream
+/// failure (a closed connection from the upstream gateway before any
+/// SSE event is yielded) is masked, while a second consecutive failure
+/// surfaces promptly. Bumping this requires also bumping
+/// [`STREAM_RETRY_BACKOFF`] to avoid hot-looping a flapping upstream.
+///
+/// See `docs/incidents/2026-04-25-workflow-cascades-past-failed-step.md`
+/// and the regression in `tests/openai_compatible_stream_retry.rs`.
+const STREAM_MAX_ATTEMPTS: usize = 2;
+
+/// Backoff between HTTP attempts. Small enough that the demo doesn't
+/// feel laggy on a one-off blip, large enough that a flapping endpoint
+/// can recover before we re-fire.
+const STREAM_RETRY_BACKOFF: Duration = Duration::from_millis(150);
+
+/// Outcome of a single HTTP attempt at `chat/completions`. Splitting
+/// transport / 5xx (retryable) from 4xx (auth, validation, quota —
+/// hard failures the caller should see immediately) lets
+/// [`OpenAiCompatibleProvider::chat_stream`] burn at most one extra
+/// request on flapping connectivity while still surfacing genuinely
+/// fatal responses on the first attempt.
+enum AttemptError {
+    /// Connection / TLS reset, body-decode failures during the
+    /// response head, 5xx responses, etc. Worth one retry.
+    Transient(OrkError),
+    /// 4xx responses, body-serialise errors — anything where retrying
+    /// can only make matters worse.
+    Fatal(OrkError),
+}
+
+impl AttemptError {
+    fn into_inner(self) -> OrkError {
+        match self {
+            Self::Transient(e) | Self::Fatal(e) => e,
+        }
+    }
+}
+
+/// One full HTTP attempt of the streaming chat-completions endpoint:
+/// build + send the request, then classify the outcome. Pulled out of
+/// [`OpenAiCompatibleProvider::chat_stream`] so initial sends and
+/// in-stream retries share one implementation.
+async fn send_chat_stream_attempt(
+    client: &Client,
+    url: &str,
+    body_bytes: &[u8],
+    headers: &HashMap<String, String>,
+    provider_id: &str,
+) -> Result<reqwest::Response, AttemptError> {
+    let mut req = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "text/event-stream")
+        .body(body_bytes.to_vec());
+    for (k, v) in headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    // Anything `reqwest::send().await` returns is by definition a
+    // transport-level failure (DNS, TCP/TLS reset, write timeout, …);
+    // we treat them all as transient. The mirroring symmetric case —
+    // body decode errors during the response stream — is handled
+    // inside the `async_stream` block in `chat_stream`.
+    let resp = req.send().await.map_err(|e| {
+        AttemptError::Transient(OrkError::LlmProvider(format!("request failed: {e}")))
+    })?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_else(|_| "no body".into());
+        let err = OrkError::LlmProvider(format!("{provider_id} API error {status}: {body}"));
+        return if status.is_server_error() {
+            // 5xx — gateway / model server hiccup; retryable.
+            Err(AttemptError::Transient(err))
+        } else {
+            // 4xx — auth, validation, quota; replaying gains nothing.
+            Err(AttemptError::Fatal(err))
+        };
+    }
+    Ok(resp)
 }
 
 #[derive(Serialize)]
@@ -468,12 +597,14 @@ fn process_sse_event_lines(
 }
 
 #[async_trait]
-impl LlmProvider for MinimaxProvider {
+impl LlmProvider for OpenAiCompatibleProvider {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, OrkError> {
-        let model = request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.default_model.clone());
+        let model = request.model.clone().or_else(|| self.default_model.clone()).ok_or_else(|| {
+            OrkError::LlmProvider(format!(
+                "no model resolved for provider `{}`: ChatRequest.model is None and the catalog entry has no default_model",
+                self.provider_id
+            ))
+        })?;
 
         let messages: Vec<OpenAiMessage> = request.messages.iter().map(message_to_wire).collect();
 
@@ -488,14 +619,15 @@ impl LlmProvider for MinimaxProvider {
             tool_choice: tool_choice_to_wire(&request.tool_choice),
         };
 
-        debug!(model = %model, "sending chat request to Minimax");
+        debug!(provider = %self.provider_id, model = %model, "sending chat request");
 
-        let resp = self
+        let req = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        let resp = self
+            .apply_headers(req)
             .send()
             .await
             .map_err(|e| OrkError::LlmProvider(format!("request failed: {e}")))?;
@@ -504,7 +636,8 @@ impl LlmProvider for MinimaxProvider {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_else(|_| "no body".into());
             return Err(OrkError::LlmProvider(format!(
-                "Minimax API error {status}: {body}"
+                "{} API error {status}: {body}",
+                self.provider_id
             )));
         }
 
@@ -537,10 +670,12 @@ impl LlmProvider for MinimaxProvider {
     }
 
     async fn chat_stream(&self, request: ChatRequest) -> Result<LlmChatStream, OrkError> {
-        let fallback_model = request
-            .model
-            .clone()
-            .unwrap_or_else(|| self.default_model.clone());
+        let fallback_model = request.model.clone().or_else(|| self.default_model.clone()).ok_or_else(|| {
+            OrkError::LlmProvider(format!(
+                "no model resolved for provider `{}`: ChatRequest.model is None and the catalog entry has no default_model",
+                self.provider_id
+            ))
+        })?;
 
         let messages: Vec<OpenAiMessage> = request.messages.iter().map(message_to_wire).collect();
 
@@ -557,52 +692,162 @@ impl LlmProvider for MinimaxProvider {
             tool_choice: tool_choice_to_wire(&request.tool_choice),
         };
 
-        debug!(model = %fallback_model, "sending streaming chat request to Minimax");
+        debug!(provider = %self.provider_id, model = %fallback_model, "sending streaming chat request");
 
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-            .json(&body)
-            .send()
+        // Serialize the body once so the retry path (inside the stream)
+        // doesn't have to re-serialize the same `OpenAiRequest`. Cloning
+        // the bytes is much cheaper than re-walking serde for every
+        // attempt.
+        let body_bytes = serde_json::to_vec(&body)
+            .map_err(|e| OrkError::LlmProvider(format!("serialise chat request body: {e}")))?;
+        let url = format!("{}/chat/completions", self.base_url);
+
+        // Initial-send retry loop. Up to `STREAM_MAX_ATTEMPTS` total
+        // HTTP requests are issued here, but only when the first one
+        // fails with a *transient* class (TCP/TLS reset, 5xx, …). 4xx
+        // responses surface synchronously on the first attempt because
+        // replaying them just burns budget the next call might want
+        // for an actually-flapping endpoint. Mirrors the safety check
+        // we apply mid-stream below.
+        let mut initial_attempts: usize = 0;
+        let resp = loop {
+            initial_attempts += 1;
+            match send_chat_stream_attempt(
+                &self.client,
+                &url,
+                &body_bytes,
+                &self.headers,
+                &self.provider_id,
+            )
             .await
-            .map_err(|e| OrkError::LlmProvider(format!("request failed: {e}")))?;
+            {
+                Ok(r) => break r,
+                Err(AttemptError::Fatal(e)) => return Err(e),
+                Err(AttemptError::Transient(e)) => {
+                    if initial_attempts >= STREAM_MAX_ATTEMPTS {
+                        return Err(e);
+                    }
+                    warn!(
+                        provider = %self.provider_id,
+                        attempt = initial_attempts,
+                        error = %e,
+                        "transient initial-send failure; retrying once before giving up"
+                    );
+                    tokio::time::sleep(STREAM_RETRY_BACKOFF).await;
+                }
+            }
+        };
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_else(|_| "no body".into());
-            return Err(OrkError::LlmProvider(format!(
-                "Minimax API error {status}: {body}"
-            )));
-        }
+        // Pieces the mid-stream retry loop needs to re-issue the
+        // request from inside the `async_stream` block.
+        let client = self.client.clone();
+        let headers = self.headers.clone();
+        let provider_id = self.provider_id.clone();
+        // Share the attempt budget with the initial-send loop above so
+        // the worst case is at most `STREAM_MAX_ATTEMPTS` HTTP requests
+        // per `chat_stream` call no matter where the failures cluster.
+        let attempts_used_at_stream_start = initial_attempts;
 
-        let mut byte_stream = resp.bytes_stream();
         let stream = async_stream::stream! {
-            let mut buf = String::new();
-            let mut last_model: Option<String> = None;
-            let mut last_usage: Option<OpenAiUsage> = None;
-            let mut aggregator = ToolCallAggregator::default();
-            let mut finish_reason_raw: Option<String> = None;
+            let mut current_resp = Some(resp);
+            let mut attempts: usize = attempts_used_at_stream_start - 1;
+            // True once any `Ok` event has been forwarded to the
+            // consumer. Past that point a retry would corrupt the
+            // observed stream (replayed deltas, duplicated tool calls)
+            // so the next stream-read error must propagate as-is.
+            let mut yielded_ok = false;
 
-            while let Some(item) = byte_stream.next().await {
-                let chunk = match item {
-                    Ok(b) => b,
-                    Err(e) => {
-                        yield Err(OrkError::LlmProvider(format!("stream read failed: {e}")));
-                        return;
+            'attempt: loop {
+                attempts += 1;
+                let resp = match current_resp.take() {
+                    Some(r) => r,
+                    None => {
+                        // Mid-stream retry: re-issue the request. A 4xx
+                        // here is unlikely (the first attempt already
+                        // showed the model server is willing to talk
+                        // to us) but if it happens, surface as-is —
+                        // the consumer would not benefit from a third
+                        // attempt anyway.
+                        match send_chat_stream_attempt(
+                            &client,
+                            &url,
+                            &body_bytes,
+                            &headers,
+                            &provider_id,
+                        )
+                        .await {
+                            Ok(r) => r,
+                            Err(retry_err) => {
+                                yield Err(retry_err.into_inner());
+                                return;
+                            }
+                        }
                     }
                 };
-                buf.push_str(&String::from_utf8_lossy(&chunk));
 
-                while let Some(pos) = buf.find("\n\n") {
-                    let raw_event = buf[..pos].to_string();
-                    buf = buf[pos + 2..].to_string();
+                let mut byte_stream = resp.bytes_stream();
+                let mut buf = String::new();
+                let mut last_model: Option<String> = None;
+                let mut last_usage: Option<OpenAiUsage> = None;
+                let mut aggregator = ToolCallAggregator::default();
+                let mut finish_reason_raw: Option<String> = None;
 
+                while let Some(item) = byte_stream.next().await {
+                    let chunk = match item {
+                        Ok(b) => b,
+                        Err(e) => {
+                            // Retry the *whole* HTTP attempt only when:
+                            //   1. nothing has reached the consumer yet
+                            //      (a replayed request would otherwise
+                            //      duplicate already-rendered content),
+                            //   2. we still have attempt budget.
+                            // Anything else propagates as-is so flapping
+                            // mid-stream doesn't get masked behind two
+                            // failed attempts.
+                            if !yielded_ok && attempts < STREAM_MAX_ATTEMPTS {
+                                warn!(
+                                    provider = %provider_id,
+                                    attempt = attempts,
+                                    error = %e,
+                                    "transient mid-stream failure before any SSE event; retrying once"
+                                );
+                                tokio::time::sleep(STREAM_RETRY_BACKOFF).await;
+                                continue 'attempt;
+                            }
+                            yield Err(OrkError::LlmProvider(format!("stream read failed: {e}")));
+                            return;
+                        }
+                    };
+                    buf.push_str(&String::from_utf8_lossy(&chunk));
+
+                    while let Some(pos) = buf.find("\n\n") {
+                        let raw_event = buf[..pos].to_string();
+                        buf = buf[pos + 2..].to_string();
+
+                        let mut events = Vec::new();
+                        if let Err(e) = process_sse_event_lines(
+                            &raw_event,
+                            &mut last_model,
+                            &mut last_usage,
+                            &mut aggregator,
+                            &mut events,
+                            &mut finish_reason_raw,
+                        ) {
+                            yield Err(e);
+                            return;
+                        }
+                        for ev in events {
+                            yielded_ok = true;
+                            yield Ok(ev);
+                        }
+                    }
+                }
+
+                let tail = buf.trim();
+                if !tail.is_empty() {
                     let mut events = Vec::new();
                     if let Err(e) = process_sse_event_lines(
-                        &raw_event,
+                        tail,
                         &mut last_model,
                         &mut last_usage,
                         &mut aggregator,
@@ -612,53 +857,58 @@ impl LlmProvider for MinimaxProvider {
                         yield Err(e);
                         return;
                     }
+                    // No need to update `yielded_ok` here — we have
+                    // already exited the byte_stream loop, so the only
+                    // consumer of the flag (the retry guard) cannot fire
+                    // again on this attempt.
                     for ev in events {
                         yield Ok(ev);
                     }
                 }
-            }
 
-            let tail = buf.trim();
-            if !tail.is_empty() {
-                let mut events = Vec::new();
-                if let Err(e) = process_sse_event_lines(
-                    tail,
-                    &mut last_model,
-                    &mut last_usage,
-                    &mut aggregator,
-                    &mut events,
-                    &mut finish_reason_raw,
-                ) {
-                    yield Err(e);
-                    return;
+                let finish_reason = map_finish_reason(finish_reason_raw);
+                // Final flush of any straggler tool calls. Defensive — at this
+                // point either every slot has emitted or finish_reason is
+                // ToolCalls and the model just sent very-late argument bytes.
+                if matches!(finish_reason, FinishReason::ToolCalls) {
+                    for ev in aggregator.drain_remaining() {
+                        yield Ok(ChatStreamEvent::ToolCall(ev));
+                    }
                 }
-                for ev in events {
-                    yield Ok(ev);
-                }
-            }
 
-            let finish_reason = map_finish_reason(finish_reason_raw);
-            // Final flush of any straggler tool calls. Defensive — at this
-            // point either every slot has emitted or finish_reason is
-            // ToolCalls and the model just sent very-late argument bytes.
-            if matches!(finish_reason, FinishReason::ToolCalls) {
-                for ev in aggregator.drain_remaining() {
-                    yield Ok(ChatStreamEvent::ToolCall(ev));
-                }
+                let usage = last_usage
+                    .map(usage_to_token)
+                    .unwrap_or_else(zero_usage);
+                let model = last_model.unwrap_or(fallback_model);
+                yield Ok(ChatStreamEvent::Done { usage, model, finish_reason });
+                return;
             }
-
-            let usage = last_usage
-                .map(usage_to_token)
-                .unwrap_or_else(zero_usage);
-            let model = last_model.unwrap_or(fallback_model);
-            yield Ok(ChatStreamEvent::Done { usage, model, finish_reason });
         };
 
         Ok(Box::pin(stream))
     }
 
     fn provider_name(&self) -> &str {
-        "minimax"
+        &self.provider_id
+    }
+
+    fn capabilities(&self, model: &str) -> ModelCapabilities {
+        // Walk the catalog entry; the first match wins (operators can list
+        // generic-then-specific). Returning the trait-default when there's
+        // no declared entry keeps the agent loop from accidentally
+        // disabling tool-calling for models we just haven't catalogued
+        // yet.
+        for entry in &self.capabilities {
+            if entry.model == model {
+                return ModelCapabilities {
+                    supports_tools: entry.supports_tools,
+                    supports_streaming: entry.supports_streaming,
+                    supports_vision: entry.supports_vision,
+                    max_context: entry.max_context.unwrap_or(0),
+                };
+            }
+        }
+        ModelCapabilities::default()
     }
 }
 
@@ -781,5 +1031,28 @@ mod tests {
         assert_eq!(tc.id, "call_x");
         assert_eq!(tc.function.name, "echo");
         assert_eq!(tc.function.arguments, "{\"hello\":\"world\"}");
+    }
+
+    #[test]
+    fn capabilities_lookup_uses_catalog_then_falls_through() {
+        let p = OpenAiCompatibleProvider::new(
+            "openai",
+            "https://example.com/v1",
+            None,
+            HashMap::new(),
+            vec![ModelCapabilitiesEntry {
+                model: "gpt-4o-mini".into(),
+                supports_tools: true,
+                supports_streaming: true,
+                supports_vision: false,
+                max_context: Some(128_000),
+            }],
+        );
+        let caps = p.capabilities("gpt-4o-mini");
+        assert!(caps.supports_tools);
+        assert_eq!(caps.max_context, 128_000);
+        // Unknown models fall through to the trait default.
+        let unknown = p.capabilities("not-listed");
+        assert_eq!(unknown.max_context, 0);
     }
 }

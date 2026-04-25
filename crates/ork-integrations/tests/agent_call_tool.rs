@@ -171,6 +171,7 @@ fn root_ctx(tenant: TenantId) -> AgentContext {
         iteration: None,
         delegation_depth: 0,
         delegation_chain: Vec::new(),
+        step_llm_overrides: None,
     }
 }
 
@@ -295,5 +296,165 @@ async fn agent_call_unknown_tool_name_is_rejected() {
         Ok(v) => panic!("expected error for wrong tool name; got {v}"),
         Err(OrkError::Integration(_)) => {}
         Err(other) => panic!("expected Integration error, got {other:?}"),
+    }
+}
+
+// -- peer_<agent_id>_<skill_id> dispatch (ADR 0006 §`LLM tool surface`) ----
+
+/// EchoAgent variant with a card whose `name` differs from the registry id and
+/// whose skill has a non-default id. Used to pin both halves of Bug B:
+///  - the `CompositeToolExecutor::peer_*` arm desugars through
+///    `dispatch_peer_tool` instead of falling into the integration arm;
+///  - the registry's reverse lookup keys off the registry id, not card.name.
+struct CustomEchoAgent {
+    id: AgentId,
+    card: AgentCard,
+}
+
+impl CustomEchoAgent {
+    fn new(id: &str, card_name: &str, skill_id: &str) -> Self {
+        let mut c = card(id);
+        c.name = card_name.to_string();
+        c.skills[0].id = skill_id.to_string();
+        c.skills[0].name = "doer".into();
+        Self {
+            id: id.into(),
+            card: c,
+        }
+    }
+}
+
+#[async_trait]
+impl Agent for CustomEchoAgent {
+    fn id(&self) -> &AgentId {
+        &self.id
+    }
+    fn card(&self) -> &AgentCard {
+        &self.card
+    }
+    async fn send_stream(
+        &self,
+        ctx: AgentContext,
+        msg: AgentMessage,
+    ) -> Result<AgentEventStream, OrkError> {
+        // Reuse EchoAgent's body verbatim by delegating.
+        EchoAgent {
+            id: self.id.clone(),
+            card: self.card.clone(),
+        }
+        .send_stream(ctx, msg)
+        .await
+    }
+}
+
+#[tokio::test]
+async fn composite_dispatches_peer_tool_via_agent_call_under_casing_mismatch() {
+    use ork_integrations::tools::{CompositeToolExecutor, IntegrationToolExecutor};
+
+    let tenant = TenantId::new();
+
+    // Registry: id="synthesizer" (lowercase, like the real demo) with a card
+    // named "Synthesizer" and a skill id "synth-default".
+    let synth: Arc<dyn Agent> = Arc::new(CustomEchoAgent::new(
+        "synthesizer",
+        "Synthesizer",
+        "synth-default",
+    ));
+    let executor: Arc<Mutex<Option<Arc<AgentCallToolExecutor>>>> = Arc::new(Mutex::new(None));
+    let executor_capture = executor.clone();
+    let _registry = Arc::new_cyclic(|registry_weak: &Weak<AgentRegistry>| {
+        let exec = Arc::new(AgentCallToolExecutor::new(
+            registry_weak.clone(),
+            None,
+            None,
+        ));
+        executor_capture
+            .try_lock()
+            .expect("uncontended in test")
+            .replace(exec);
+        AgentRegistry::from_agents(vec![synth])
+    });
+    let agent_call = executor
+        .try_lock()
+        .expect("uncontended in test")
+        .clone()
+        .expect("executor was set inside Arc::new_cyclic");
+
+    let composite = CompositeToolExecutor::new(IntegrationToolExecutor::new(), None)
+        .with_agent_call(agent_call);
+
+    let ctx = root_ctx(tenant);
+    let result = composite
+        .execute(
+            &ctx,
+            // The catalog advertises the tool under the registry id, NOT the
+            // card display name. Pre-fix this name didn't exist in the catalog
+            // (it produced `peer_Synthesizer_*`) and the executor didn't know
+            // how to dispatch any `peer_*` name anyway.
+            "peer_synthesizer_synth-default",
+            &serde_json::json!({"prompt": "do the thing"}),
+        )
+        .await
+        .expect("composite must dispatch peer tool through the agent_call arm");
+
+    assert_eq!(result["status"], "completed");
+    assert_eq!(result["reply"]["text"], "echo:do the thing");
+}
+
+#[tokio::test]
+async fn composite_peer_tool_unknown_returns_clear_error() {
+    use ork_integrations::tools::{CompositeToolExecutor, IntegrationToolExecutor};
+
+    let tenant = TenantId::new();
+    let (_registry, exec) = build_pair(None);
+    let composite =
+        CompositeToolExecutor::new(IntegrationToolExecutor::new(), None).with_agent_call(exec);
+
+    let err = composite
+        .execute(
+            &root_ctx(tenant),
+            "peer_nope_does-not-exist",
+            &serde_json::json!({"prompt": "x"}),
+        )
+        .await
+        .unwrap_err();
+    match err {
+        OrkError::Integration(msg) => {
+            assert!(
+                msg.contains("unknown peer tool"),
+                "error message should call out the unknown peer tool, got `{msg}`"
+            );
+        }
+        other => panic!("expected Integration error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn composite_peer_tool_without_agent_call_returns_explicit_error() {
+    use ork_integrations::tools::{CompositeToolExecutor, IntegrationToolExecutor};
+
+    let tenant = TenantId::new();
+    let composite = CompositeToolExecutor::new(IntegrationToolExecutor::new(), None);
+
+    let err = composite
+        .execute(
+            &root_ctx(tenant),
+            "peer_synthesizer_default",
+            &serde_json::json!({"prompt": "x"}),
+        )
+        .await
+        .unwrap_err();
+    match err {
+        OrkError::Integration(msg) => {
+            assert!(
+                msg.contains("peer tool"),
+                "error message should mention the peer tool name, got `{msg}`"
+            );
+            assert!(
+                msg.contains("ADR-0006"),
+                "error must point operators at ADR-0006, got `{msg}`"
+            );
+        }
+        other => panic!("expected Integration error, got {other:?}"),
     }
 }

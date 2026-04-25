@@ -17,7 +17,7 @@ pub(crate) fn parse_json_array(s: &str) -> Result<Vec<Value>, OrkError> {
 pub(crate) fn strip_json_fence(s: &str) -> &str {
     let s = s.trim();
     if let Some(rest) = s.strip_prefix("```") {
-        let rest = rest.trim_start_matches(|c| c == '`');
+        let rest = rest.trim_start_matches('`');
         let rest = rest.strip_prefix("json").unwrap_or(rest).trim_start();
         if let Some(end) = rest.rfind("```") {
             return rest[..end].trim();
@@ -168,15 +168,15 @@ pub(crate) fn parse_step_json(raw: &str) -> Option<Value> {
     if let Ok(v) = serde_json::from_str::<Value>(t) {
         return Some(v);
     }
-    if let Some(slice) = extract_markdown_json_block(trimmed) {
-        if let Ok(v) = serde_json::from_str::<Value>(slice) {
-            return Some(v);
-        }
+    if let Some(slice) = extract_markdown_json_block(trimmed)
+        && let Ok(v) = serde_json::from_str::<Value>(slice)
+    {
+        return Some(v);
     }
-    if let Some(slice) = extract_first_json_object(trimmed) {
-        if let Ok(v) = serde_json::from_str::<Value>(slice) {
-            return Some(v);
-        }
+    if let Some(slice) = extract_first_json_object(trimmed)
+        && let Ok(v) = serde_json::from_str::<Value>(slice)
+    {
+        return Some(v);
     }
     None
 }

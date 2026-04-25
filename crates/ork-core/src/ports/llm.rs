@@ -159,6 +159,15 @@ pub struct ChatRequest {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub model: Option<String>,
+    /// ADR 0012 §`Selection — separate provider + model fields`. Routes the
+    /// request to a named entry in the [`crate::ports::llm::LlmProvider`]
+    /// catalog (the `LlmRouter` instance backing this trait). `None` falls
+    /// through to the tenant default and then the operator default; the
+    /// actual resolution lives in `ork_llm::router::LlmRouter::resolve`.
+    /// Held here so it survives serialisation through any persisted
+    /// request shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// Tool catalog the model may call. Empty disables tool calling for
     /// this request.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -185,6 +194,7 @@ impl ChatRequest {
             temperature,
             max_tokens,
             model,
+            provider: None,
             tools: Vec::new(),
             tool_choice: None,
         }
@@ -315,8 +325,27 @@ pub trait LlmProvider: Send + Sync {
 
     /// Static capabilities for `model`. Default impl returns
     /// [`ModelCapabilities::default`] (everything-on except vision); ADR 0012's
-    /// router-level impls will return real per-model data.
+    /// per-provider impls (e.g. `OpenAiCompatibleProvider`) return real
+    /// per-model data.
+    ///
+    /// **For routers, this method returns operator-default-only data and
+    /// can be wrong for tenant-overridden providers.** Callers that have
+    /// (or can build) a [`ChatRequest`] should prefer
+    /// [`Self::capabilities_for`] which honours the full
+    /// step → agent → tenant → operator resolution chain.
     fn capabilities(&self, _model: &str) -> ModelCapabilities {
         ModelCapabilities::default()
+    }
+
+    /// Resolve [`ModelCapabilities`] using the same `(provider, model)`
+    /// resolution the corresponding `chat`/`chat_stream` would perform
+    /// for `request`. Default impl just delegates to [`Self::capabilities`]
+    /// using `request.model` (so single-provider impls keep working
+    /// unchanged); routers like `ork_llm::router::LlmRouter` override this
+    /// to consult the full step → agent → tenant → operator chain via the
+    /// in-scope `ResolveContext`.
+    async fn capabilities_for(&self, request: &ChatRequest) -> ModelCapabilities {
+        let model = request.model.as_deref().unwrap_or("");
+        self.capabilities(model)
     }
 }

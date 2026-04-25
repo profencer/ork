@@ -30,6 +30,7 @@ Rules:
 - Output structured data that other agents can consume"#
             .into(),
         tools: vec!["list_repos".into()],
+        provider: None,
         model: None,
         temperature: 0.2,
         max_tokens: 4096,
@@ -72,6 +73,7 @@ Rules:
             "github_pipelines".into(),
             "gitlab_pipelines".into(),
         ],
+        provider: None,
         model: None,
         temperature: 0.1,
         max_tokens: 8192,
@@ -113,6 +115,7 @@ For deployment notifications:
 - Add relevant pipeline links"#
             .into(),
         tools: vec![],
+        provider: None,
         model: None,
         temperature: 0.4,
         max_tokens: 4096,
@@ -143,6 +146,7 @@ Output format:
 - Be constructive and actionable in feedback"#
             .into(),
         tools: vec![],
+        provider: None,
         model: None,
         temperature: 0.1,
         max_tokens: 2048,
@@ -164,6 +168,7 @@ Explicitly call out ordering, shared APIs and schemas, event contracts, data dep
 Prefer structured JSON when the workflow requests it."#
             .into(),
         tools: vec![],
+        provider: None,
         model: None,
         temperature: 0.2,
         max_tokens: 8192,

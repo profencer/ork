@@ -59,6 +59,29 @@ impl ToolExecutor for EchoTools {
     }
 }
 
+/// Tool executor that returns one scripted error per call, then succeeds.
+/// Used to prove the agent loop converts recoverable tool errors into tool
+/// results (per ADR 0010 §`Failure model`) instead of aborting the step.
+struct FailFirstTools {
+    pending_errors: Mutex<Vec<OrkError>>,
+}
+
+#[async_trait]
+impl ToolExecutor for FailFirstTools {
+    async fn execute(
+        &self,
+        _ctx: &AgentContext,
+        tool_name: &str,
+        input: &serde_json::Value,
+    ) -> Result<serde_json::Value, OrkError> {
+        let mut errs = self.pending_errors.lock().await;
+        if !errs.is_empty() {
+            return Err(errs.remove(0));
+        }
+        Ok(json!({"tool": tool_name, "input": input}))
+    }
+}
+
 fn done(reason: FinishReason) -> ChatStreamEvent {
     ChatStreamEvent::Done {
         usage: TokenUsage {
@@ -78,6 +101,7 @@ fn config() -> AgentConfig {
         description: "test".into(),
         system_prompt: "sys".into(),
         tools: vec!["list_repos".into()],
+        provider: None,
         model: None,
         temperature: 0.0,
         max_tokens: 100,
@@ -107,6 +131,7 @@ fn ctx() -> AgentContext {
         iteration: None,
         delegation_depth: 0,
         delegation_chain: Vec::new(),
+        step_llm_overrides: None,
     }
 }
 
@@ -163,4 +188,150 @@ async fn tool_loop_history_matches_openai_conventions() {
     assert_eq!(history[2].tool_calls[0].id, "call_1");
     assert_eq!(format!("{:?}", history[3].role), "Tool");
     assert_eq!(history[3].tool_call_id.as_deref(), Some("call_1"));
+}
+
+/// Regression test for the `review (failed): validation error: agent_call:
+/// missing required field `prompt`` demo failure.
+///
+/// Per ADR 0010 §`Failure model` ("tool-call errors stay in the tool result
+/// (LLM can retry); transport / connection errors bubble up as step
+/// failures"), a tool call that returns a `Validation` /
+/// `Integration` / `LlmProvider` / `NotFound` error MUST be surfaced back to
+/// the LLM as a tool-role message containing the error payload, not abort
+/// the agent step. Otherwise an LLM that emits a malformed `agent_call(...)`
+/// (or any other tool call with bad args) on its first try kills the entire
+/// workflow step instead of getting a chance to self-correct on the next
+/// iteration.
+#[tokio::test]
+async fn tool_validation_error_feeds_back_to_llm_as_tool_result() {
+    let llm = Arc::new(ScriptedLlm {
+        streams: Mutex::new(vec![
+            // Iter 2: LLM "recovers" after seeing the error in history.
+            vec![
+                ChatStreamEvent::Delta("recovered".into()),
+                done(FinishReason::Stop),
+            ],
+            // Iter 1: LLM emits a malformed tool call that the executor
+            // will reject with `OrkError::Validation`.
+            vec![
+                ChatStreamEvent::ToolCall(ToolCall {
+                    id: "call_bad".into(),
+                    name: "list_repos".into(),
+                    arguments: json!({}),
+                }),
+                done(FinishReason::ToolCalls),
+            ],
+        ]),
+        requests: Mutex::new(Vec::new()),
+    });
+    let tools = Arc::new(FailFirstTools {
+        pending_errors: Mutex::new(vec![OrkError::Validation(
+            "agent_call: missing required field `prompt`".into(),
+        )]),
+    });
+    let ctx = ctx();
+    let agent = LocalAgent::new(
+        config(),
+        &CardEnrichmentContext::minimal(),
+        llm.clone(),
+        tools,
+    );
+    let msg = AgentMessage {
+        role: Role::User,
+        parts: vec![Part::Text {
+            text: "hi".into(),
+            metadata: None,
+        }],
+        message_id: MessageId::new(),
+        task_id: Some(ctx.task_id),
+        context_id: None,
+        metadata: None,
+    };
+
+    let mut stream = agent.send_stream(ctx, msg).await.expect("stream");
+    let mut saw_err = None;
+    while let Some(event) = stream.next().await {
+        if let Err(e) = event {
+            saw_err = Some(e);
+            break;
+        }
+    }
+    assert!(
+        saw_err.is_none(),
+        "agent loop must not abort the step on a recoverable tool-call error \
+         (ADR 0010 §`Failure model`); got: {saw_err:?}"
+    );
+
+    let requests = llm.requests.lock().await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "LLM should be re-invoked after tool error so it can retry"
+    );
+    let history = &requests[1].messages;
+    let tool_msg = history
+        .iter()
+        .find(|m| format!("{:?}", m.role) == "Tool")
+        .expect("history must contain a Tool-role message with the error payload");
+    assert_eq!(tool_msg.tool_call_id.as_deref(), Some("call_bad"));
+    assert!(
+        tool_msg.content.contains("missing required field `prompt`"),
+        "tool result must carry the validation error verbatim so the LLM \
+         can self-correct; got: {}",
+        tool_msg.content
+    );
+}
+
+/// Cancellation must still abort the step — it is not a tool-call error,
+/// it is operator/engine signal that the entire step should stop. Without
+/// this guardrail, the recoverable-error path above would swallow
+/// cancellation tokens. ADR 0010 §`Failure model` ("transport / connection
+/// errors bubble up as step failures") covers this by analogy.
+#[tokio::test]
+async fn tool_call_cancellation_still_aborts_step() {
+    let llm = Arc::new(ScriptedLlm {
+        streams: Mutex::new(vec![vec![
+            ChatStreamEvent::ToolCall(ToolCall {
+                id: "call_x".into(),
+                name: "list_repos".into(),
+                arguments: json!({}),
+            }),
+            done(FinishReason::ToolCalls),
+        ]]),
+        requests: Mutex::new(Vec::new()),
+    });
+    let tools = Arc::new(EchoTools);
+    let ctx = ctx();
+    ctx.cancel.cancel();
+    let agent = LocalAgent::new(
+        config(),
+        &CardEnrichmentContext::minimal(),
+        llm.clone(),
+        tools,
+    );
+    let msg = AgentMessage {
+        role: Role::User,
+        parts: vec![Part::Text {
+            text: "hi".into(),
+            metadata: None,
+        }],
+        message_id: MessageId::new(),
+        task_id: Some(ctx.task_id),
+        context_id: None,
+        metadata: None,
+    };
+
+    let mut stream = agent.send_stream(ctx, msg).await.expect("stream");
+    let mut saw_err = None;
+    while let Some(event) = stream.next().await {
+        if let Err(e) = event {
+            saw_err = Some(e);
+            break;
+        }
+    }
+    let err = saw_err.expect("cancelled step must surface an error");
+    assert!(
+        format!("{err}").contains("cancelled"),
+        "expected cancellation error, got: {err}"
+    );
 }

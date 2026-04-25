@@ -39,6 +39,7 @@ pub enum WorkflowTrigger {
 /// `#[serde(untagged)]` keeps the existing bare-string YAML round-tripping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorkflowAgentRef {
     Id(String),
     Inline {
@@ -98,6 +99,15 @@ pub struct WorkflowStep {
     /// execution.
     pub tools: Vec<String>,
     pub prompt_template: String,
+    /// Optional per-step provider override (ADR 0012 §`Selection`). Highest
+    /// precedence in the resolution chain (step → agent → tenant default →
+    /// operator default); `None` falls through to [`crate::models::agent::AgentConfig::provider`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Optional per-step model override (ADR 0012 §`Selection`). Resolved
+    /// after [`Self::provider`]; `None` falls through to [`crate::models::agent::AgentConfig::model`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
     pub condition: Option<StepCondition>,

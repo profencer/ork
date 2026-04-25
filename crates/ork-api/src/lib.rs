@@ -5,6 +5,7 @@
 //! `pub mod` re-exports.
 
 pub mod eventing;
+pub mod llm_catalog;
 pub mod middleware;
 pub mod remote_agents;
 pub mod routes;

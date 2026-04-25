@@ -19,3 +19,6 @@ tokio-util = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
 glob = "0.3"
+
+[dev-dependencies]
+chrono = { workspace = true }

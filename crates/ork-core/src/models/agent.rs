@@ -12,8 +12,15 @@ pub struct AgentConfig {
     /// `agent_call` can be exposed in addition to these entries.
     #[serde(default)]
     pub tools: Vec<String>,
-    /// Optional per-agent model override. Real provider/model router parsing is
-    /// owned by ADR 0012; for now this value is passed through unchanged.
+    /// Optional per-agent provider override (ADR 0012 §`Selection`). When
+    /// set, requests routed through this agent prefer the named entry in
+    /// the operator/tenant LLM provider catalog. `None` falls through to
+    /// the workflow step, then tenant default, then operator default.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Optional per-agent model override. Resolved after the provider
+    /// (ADR 0012 §`Selection`); when both are `None` the router uses the
+    /// resolved provider's `default_model`.
     #[serde(default)]
     pub model: Option<String>,
     pub temperature: f32,

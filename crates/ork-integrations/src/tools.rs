@@ -308,6 +308,21 @@ impl ToolExecutor for CompositeToolExecutor {
             return agent_call.execute(ctx, tool_name, input).await;
         }
 
+        // ADR-0006 §`LLM tool surface`. The catalog advertises one descriptor
+        // per peer skill named `peer_<agent_id>_<skill_id>`; this arm desugars
+        // those into the same one-shot delegation as `agent_call` so the LLM
+        // can pick a peer by capability without us having to register every
+        // possible target as its own arm. Without this, the integration arm
+        // below catches `peer_*` and returns `unknown tool: …`.
+        if tool_name.starts_with("peer_") {
+            let agent_call = self.agent_call.as_ref().ok_or_else(|| {
+                OrkError::Integration(format!(
+                    "peer tool `{tool_name}` was advertised by the catalog but agent_call is not configured (ADR-0006 not wired in this build)"
+                ))
+            })?;
+            return agent_call.dispatch_peer_tool(ctx, tool_name, input).await;
+        }
+
         if CodeToolExecutor::is_code_tool(tool_name) {
             if let Some(c) = &self.code {
                 return c.execute(ctx, tool_name, input).await;
@@ -383,6 +398,7 @@ mod tests {
             iteration: None,
             delegation_depth: 0,
             delegation_chain: Vec::new(),
+            step_llm_overrides: None,
         }
     }
 

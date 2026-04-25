@@ -463,6 +463,7 @@ mod tests {
             iteration: None,
             delegation_depth: 0,
             delegation_chain: Vec::new(),
+            step_llm_overrides: None,
         }
     }
 

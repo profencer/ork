@@ -1,7 +1,15 @@
 use chrono::{DateTime, Utc};
+use ork_common::config::LlmProviderConfig;
 use ork_common::mcp_config::McpServerConfig;
 use ork_common::types::TenantId;
 use serde::{Deserialize, Serialize};
+
+/// Tenant override for one entry in the [`ork_common::config::LlmConfig`]
+/// catalog. Same on-disk shape as the operator-side
+/// [`LlmProviderConfig`] — by design, per ADR 0012 §`Tenant overrides`:
+/// operators get one mental model. A tenant entry with the same `id` as an
+/// operator entry replaces it (mirrors `mcp_servers` from ADR 0010).
+pub type TenantLlmProviderConfig = LlmProviderConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tenant {
@@ -13,9 +21,8 @@ pub struct Tenant {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TenantSettings {
-    pub llm_api_key_encrypted: Option<String>,
     pub github_token_encrypted: Option<String>,
     pub gitlab_token_encrypted: Option<String>,
     pub gitlab_base_url: Option<String>,
@@ -27,19 +34,21 @@ pub struct TenantSettings {
     /// merge (tenant entries take precedence on collision).
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
-}
-
-impl Default for TenantSettings {
-    fn default() -> Self {
-        Self {
-            llm_api_key_encrypted: None,
-            github_token_encrypted: None,
-            gitlab_token_encrypted: None,
-            gitlab_base_url: None,
-            default_repos: Vec::new(),
-            mcp_servers: Vec::new(),
-        }
-    }
+    /// Per-tenant LLM provider catalog overrides (ADR 0012
+    /// §`Tenant overrides`). Same `id`-collision-replaces semantics as
+    /// `mcp_servers`. `#[serde(default)]` so rows persisted before
+    /// ADR 0012 deserialise unchanged.
+    #[serde(default)]
+    pub llm_providers: Vec<TenantLlmProviderConfig>,
+    /// Tenant default provider id; overrides
+    /// [`ork_common::config::LlmConfig::default_provider`] when set.
+    #[serde(default)]
+    pub default_provider: Option<String>,
+    /// Tenant default model name; resolved after the provider chain. When
+    /// set, beats the resolved provider's `default_model` but loses to
+    /// step/agent/request-level model overrides per ADR 0012 §`Selection`.
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +59,6 @@ pub struct CreateTenantRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTenantSettingsRequest {
-    pub llm_api_key: Option<String>,
     pub github_token: Option<String>,
     pub gitlab_token: Option<String>,
     pub gitlab_base_url: Option<String>,
@@ -60,36 +68,49 @@ pub struct UpdateTenantSettingsRequest {
     /// entirely (so operators can roll back without a schema change).
     #[serde(default)]
     pub mcp_servers: Option<Vec<McpServerConfig>>,
+    /// ADR 0012 §`Tenant overrides`. Same `None` / `Some([])` semantics
+    /// as [`Self::mcp_servers`]: missing field leaves the tenant's
+    /// catalog alone, an explicit empty list clears it.
+    #[serde(default)]
+    pub llm_providers: Option<Vec<TenantLlmProviderConfig>>,
+    /// ADR 0012 §`Selection`. Use `Some("")` is *not* special-cased —
+    /// pass `None` to leave the existing default alone.
+    #[serde(default)]
+    pub default_provider: Option<String>,
+    /// ADR 0012 §`Selection`. Same `None` semantics as
+    /// [`Self::default_provider`].
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ork_common::config::HeaderValueSource;
     use ork_common::mcp_config::McpTransportConfig;
 
     #[test]
-    fn tenant_settings_round_trips_without_mcp_servers_field() {
+    fn tenant_settings_round_trips_without_optional_fields() {
         // Crucial back-compat guarantee: a tenant row written before
-        // ADR 0010 (no `mcp_servers` key in its JSONB blob) must still
-        // deserialise. `#[serde(default)]` should fill in an empty Vec.
+        // ADR 0010/0012 (no `mcp_servers`/`llm_providers` keys in its
+        // JSONB blob) must still deserialise. `#[serde(default)]` should
+        // fill in empty Vecs / None.
         let json = serde_json::json!({
-            "llm_api_key_encrypted": null,
             "github_token_encrypted": null,
             "gitlab_token_encrypted": null,
             "gitlab_base_url": null,
             "default_repos": []
         });
         let parsed: TenantSettings = serde_json::from_value(json).expect("legacy row parses");
-        assert!(
-            parsed.mcp_servers.is_empty(),
-            "missing `mcp_servers` must default to an empty list (ADR-0010 back-compat)"
-        );
+        assert!(parsed.mcp_servers.is_empty());
+        assert!(parsed.llm_providers.is_empty());
+        assert!(parsed.default_provider.is_none());
+        assert!(parsed.default_model.is_none());
     }
 
     #[test]
     fn tenant_settings_round_trips_with_mcp_servers() {
         let original = TenantSettings {
-            llm_api_key_encrypted: None,
             github_token_encrypted: None,
             gitlab_token_encrypted: None,
             gitlab_base_url: None,
@@ -103,6 +124,9 @@ mod tests {
                     },
                 },
             }],
+            llm_providers: Vec::new(),
+            default_provider: None,
+            default_model: None,
         };
         let json = serde_json::to_value(&original).unwrap();
         let back: TenantSettings = serde_json::from_value(json).unwrap();
@@ -111,15 +135,49 @@ mod tests {
     }
 
     #[test]
-    fn update_request_defaults_mcp_servers_to_none() {
-        // `None` semantics for `mcp_servers`: "leave the existing list
-        // alone". A request that touches only the github token must NOT
-        // wipe the tenant's MCP server list.
+    fn tenant_settings_round_trip_with_llm_providers() {
+        // ADR 0012: tenant catalog overrides round-trip cleanly through
+        // serde with the same shape as the operator catalog.
+        let mut headers = std::collections::BTreeMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            HeaderValueSource::Env {
+                env: "TENANT_KEY".into(),
+            },
+        );
+        let original = TenantSettings {
+            llm_providers: vec![TenantLlmProviderConfig {
+                id: "openai".into(),
+                base_url: "https://tenant.example.com/v1".into(),
+                default_model: Some("gpt-4o".into()),
+                headers,
+                capabilities: Vec::new(),
+            }],
+            default_provider: Some("openai".into()),
+            default_model: Some("gpt-4o-mini".into()),
+            ..TenantSettings::default()
+        };
+        let json = serde_json::to_value(&original).unwrap();
+        let back: TenantSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.llm_providers.len(), 1);
+        assert_eq!(back.llm_providers[0].id, "openai");
+        assert_eq!(back.default_provider.as_deref(), Some("openai"));
+        assert_eq!(back.default_model.as_deref(), Some("gpt-4o-mini"));
+    }
+
+    #[test]
+    fn update_request_defaults_optional_lists_to_none() {
+        // `None` semantics for `mcp_servers` / `llm_providers`: "leave
+        // the existing list alone". A request that touches only the
+        // github token must NOT wipe either tenant catalog.
         let json = serde_json::json!({
             "github_token": "ghp_xxx"
         });
         let parsed: UpdateTenantSettingsRequest = serde_json::from_value(json).unwrap();
         assert!(parsed.mcp_servers.is_none());
+        assert!(parsed.llm_providers.is_none());
+        assert!(parsed.default_provider.is_none());
+        assert!(parsed.default_model.is_none());
         assert_eq!(parsed.github_token.as_deref(), Some("ghp_xxx"));
     }
 
@@ -128,8 +186,9 @@ mod tests {
         // `Some([])` semantics: explicitly clear the tenant's MCP
         // servers. Tested so a future refactor doesn't accidentally
         // collapse `Some([])` into `None`.
-        let json = serde_json::json!({ "mcp_servers": [] });
+        let json = serde_json::json!({ "mcp_servers": [], "llm_providers": [] });
         let parsed: UpdateTenantSettingsRequest = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.mcp_servers.as_deref().map(<[_]>::len), Some(0));
+        assert_eq!(parsed.llm_providers.as_deref().map(<[_]>::len), Some(0));
     }
 }

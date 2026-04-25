@@ -8,21 +8,23 @@
 [info] input.task = "Add an opt-in client-side request rate limiter to the Anthropic TypeScript SDK: extend the client constructor with a `requestsPerMinute` option, queue or reject requests that would exceed the budget, and document the new option in the README."
 [info] started run id=019dc178-3c1f-7990-b16f-c8a08900b1bd  (status=pending)
 [info] workflow defines 5 step(s); polling /api/runs/019dc178… until terminal
-[info] run 019dc178… -> running    [select_repos:running]
-[info] run 019dc178… -> running    [select_repos:completed  research_repos:running]
-[info] run 019dc178… -> running    [select_repos:completed  research_repos:completed  synthesize:running]
-[info] run 019dc178… -> running    [select_repos:completed  research_repos:completed  synthesize:completed  write_plan:running]
-[info] run 019dc178… -> running    [select_repos:completed  research_repos:completed  synthesize:completed  write_plan:completed  review:running]
-[info] run 019dc178… -> completed  [select_repos:completed  research_repos:completed  synthesize:completed  write_plan:completed  review:completed]
+[info] engine logs: tail -F /…/demo/logs/ork-api.log  (filter for run id 019dc178… for live progress)
+[info] run 019dc178… -> running    [select_repos:running(2s)]
+[info] run 019dc178… -> running    [select_repos:completed(7s)  research_repos:running(3s)]
+[info] run 019dc178… -> running    [select_repos:completed(7s)  research_repos:completed(28s)  synthesize:running(5s)]
+[info] run 019dc178… -> running    [select_repos:completed(7s)  research_repos:completed(28s)  synthesize:completed(34s)  write_plan:running(2s)]
+[info] still waiting (status=running, 5 expected, 4 terminal); in-flight: review
+[info] run 019dc178… -> running    [select_repos:completed(7s)  research_repos:completed(28s)  synthesize:completed(34s)  write_plan:completed(18s)  review:running(2s)]
+[info] run 019dc178… -> completed  [select_repos:completed(7s)  research_repos:completed(28s)  synthesize:completed(34s)  write_plan:completed(18s)  review:completed(11s)]
 
 [info] final run status: completed
 
 [info] step summary:
-  select_repos    status=completed  agent=planner
-  research_repos  status=completed  agent=researcher
-  synthesize      status=completed  agent=synthesizer
-  write_plan      status=completed  agent=writer
-  review          status=completed  agent=reviewer
+  select_repos    status=completed  agent=planner       dur=7s
+  research_repos  status=completed  agent=researcher    dur=28s
+  synthesize      status=completed  agent=synthesizer   dur=34s
+  write_plan      status=completed  agent=writer        dur=18s
+  review          status=completed  agent=reviewer      dur=11s
 
 [info] markdown produced by step `write_plan`:
 # Change plan — client-side request rate limiter for the Anthropic TypeScript SDK

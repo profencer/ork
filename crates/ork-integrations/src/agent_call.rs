@@ -64,6 +64,50 @@ impl AgentCallToolExecutor {
     }
 }
 
+impl AgentCallToolExecutor {
+    /// Desugar a structured peer-skill tool call (`peer_<agent_id>_<skill_id>`)
+    /// into the same delegation path as the generic `agent_call` tool.
+    ///
+    /// The catalog (see [`ork_core::agent_registry::AgentRegistry::peer_tool_descriptions`])
+    /// advertises one descriptor per `(agent, skill)` pair so the LLM can pick
+    /// a peer by capability instead of free-text. The descriptor's parameters
+    /// are `{prompt, data}` — the target agent id is encoded in the tool name
+    /// itself. We resolve the agent id through the registry (so skill ids may
+    /// contain `_` without ambiguity) and synthesise an `AgentCallInput` with
+    /// `agent` pinned to the resolved id, then re-enter via [`Self::execute`]
+    /// so semantics (RBAC TODO, delegation publisher, retries) match.
+    pub async fn dispatch_peer_tool(
+        &self,
+        ctx: &AgentContext,
+        tool_name: &str,
+        input: &serde_json::Value,
+    ) -> Result<serde_json::Value, OrkError> {
+        let registry = self.registry()?;
+        let peer = registry.resolve_peer_tool(tool_name).await.ok_or_else(|| {
+            OrkError::Integration(format!(
+                "unknown peer tool `{tool_name}`: the catalog advertised it but the registry can no longer resolve it (agent removed?)"
+            ))
+        })?;
+        let target_id = peer.target_agent_id.ok_or_else(|| {
+            OrkError::Internal(format!(
+                "peer tool `{tool_name}` resolved to a descriptor with no target_agent_id (catalog bug)"
+            ))
+        })?;
+
+        // The LLM's tool descriptor is `{prompt: string, data?: object}`.
+        // Synthesise `agent_call` input by adding the resolved agent id; the
+        // existing `agent_call` arm validates the rest.
+        let mut obj = match input {
+            serde_json::Value::Object(o) => o.clone(),
+            _ => serde_json::Map::new(),
+        };
+        obj.insert("agent".into(), serde_json::Value::String(target_id));
+        let synth = serde_json::Value::Object(obj);
+
+        self.execute(ctx, "agent_call", &synth).await
+    }
+}
+
 #[async_trait]
 impl ToolExecutor for AgentCallToolExecutor {
     async fn execute(

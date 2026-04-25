@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn task_id_serde_is_string_not_object() {
         let id = TaskId::new();
-        let v = serde_json::to_value(&id).unwrap();
+        let v = serde_json::to_value(id).unwrap();
         assert!(v.is_string(), "expected string, got {v}");
         let back: TaskId = serde_json::from_value(v).unwrap();
         assert_eq!(id, back);

@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use async_stream::stream;
 use async_trait::async_trait;
-use futures::{StreamExt, future::try_join_all};
+use futures::{StreamExt, future::join_all};
 use ork_a2a::{
     AgentCard, Message as AgentMessage, MessageId, Part, Role, TaskEvent as AgentEvent, TaskState,
     TaskStatus, TaskStatusUpdateEvent,
 };
 use ork_common::error::OrkError;
 use ork_core::a2a::card_builder::{CardEnrichmentContext, build_local_card};
-use ork_core::a2a::{AgentContext, AgentId};
+use ork_core::a2a::{AgentContext, AgentId, ResolveContext};
 use ork_core::models::agent::AgentConfig;
 use ork_core::ports::agent::{Agent, AgentEventStream};
 use ork_core::ports::llm::{
@@ -135,6 +135,44 @@ async fn execute_tool_call(
     Ok((call.id, content, truncated))
 }
 
+/// Per ADR 0010 §`Failure model` ("tool-call errors stay in the tool result
+/// (LLM can retry); transport / connection errors bubble up as step
+/// failures"), only a narrow set of error variants are treated as fatal to
+/// the step. Everything else gets converted into a structured tool-result
+/// payload below so the LLM can see the failure and self-correct on the
+/// next iteration. Without this, an LLM that emits a single malformed
+/// tool call (e.g. `agent_call` without a `prompt` field) kills the entire
+/// workflow step instead of retrying.
+fn is_fatal_tool_error(err: &OrkError) -> bool {
+    match err {
+        OrkError::Workflow(_) | OrkError::Internal(_) | OrkError::Database(_) => true,
+        OrkError::NotFound(_)
+        | OrkError::Unauthorized(_)
+        | OrkError::Forbidden(_)
+        | OrkError::Validation(_)
+        | OrkError::Conflict(_)
+        | OrkError::LlmProvider(_)
+        | OrkError::Integration(_)
+        | OrkError::Unsupported(_)
+        | OrkError::A2aClient(..)
+        | OrkError::A2aStreamLost(_) => false,
+    }
+}
+
+fn tool_error_payload(call_name: &str, err: &OrkError, max_tool_result_bytes: usize) -> String {
+    let payload = serde_json::json!({
+        "error": {
+            "tool": call_name,
+            "message": err.to_string(),
+        }
+    });
+    let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
+        format!("{{\"error\":{{\"tool\":\"{call_name}\",\"message\":\"<unserializable>\"}}}}")
+    });
+    let (content, _truncated) = truncate_tool_result(serialized, max_tool_result_bytes);
+    content
+}
+
 #[async_trait]
 impl Agent for LocalAgent {
     fn id(&self) -> &AgentId {
@@ -161,6 +199,27 @@ impl Agent for LocalAgent {
         let config = self.config.clone();
         let llm = self.llm.clone();
         let agent_id = self.id.clone();
+        // ADR 0012 §`Routing`: bind the resolution-time context so the
+        // `LlmRouter` underneath `llm` can read `tenant_id` from a tokio
+        // task-local. We do not pass the tenant id through `LlmProvider`
+        // directly — the trait stays clean.
+        let resolve_ctx = ResolveContext {
+            tenant_id: ctx.tenant_id,
+        };
+
+        // ADR 0012 §`Selection`: resolve the per-step → agent precedence
+        // here so every iteration of the loop below builds the same
+        // `request.{provider, model}`. The tenant default + operator
+        // default still resolve inside `LlmRouter::resolve`.
+        let step_overrides = ctx.step_llm_overrides.clone();
+        let request_provider = step_overrides
+            .as_ref()
+            .and_then(|o| o.provider.clone())
+            .or_else(|| config.provider.clone());
+        let request_model = step_overrides
+            .as_ref()
+            .and_then(|o| o.model.clone())
+            .or_else(|| config.model.clone());
 
         let s = stream! {
             yield Ok(AgentEvent::StatusUpdate(TaskStatusUpdateEvent {
@@ -177,11 +236,26 @@ impl Agent for LocalAgent {
                 }
             };
 
-            let selected_model = config.model.clone().unwrap_or_default();
-            // TODO(ADR-0012): use the router-resolved model id once multi-provider routing lands.
-            if !tool_descriptors.is_empty() && !llm.capabilities(&selected_model).supports_tools {
+            // ADR 0012 §`Selection`: ask the provider/router for the
+            // capabilities of the *resolved* (provider, model) pair —
+            // not the static `AgentConfig.model` that may not be the
+            // one this request actually hits. Routers override
+            // `capabilities_for` to honour the full chain; single-
+            // provider impls fall back to `capabilities(model)`.
+            let preflight = ChatRequest {
+                messages: Vec::new(),
+                temperature: None,
+                max_tokens: None,
+                model: request_model.clone(),
+                provider: request_provider.clone(),
+                tools: Vec::new(),
+                tool_choice: None,
+            };
+            let caps = resolve_ctx.scope(llm.capabilities_for(&preflight)).await;
+            if !tool_descriptors.is_empty() && !caps.supports_tools {
+                let label = request_model.clone().unwrap_or_default();
                 yield Err(OrkError::LlmProvider(format!(
-                    "model {selected_model} does not support tool calls"
+                    "model {label} does not support tool calls"
                 )));
                 return;
             }
@@ -219,12 +293,26 @@ impl Agent for LocalAgent {
                     messages: history.clone(),
                     temperature: Some(config.temperature),
                     max_tokens: Some(config.max_tokens),
-                    model: config.model.clone(),
+                    // ADR 0012 §`Selection`: workflow-step override wins
+                    // over agent-config; both already collapsed into
+                    // `request_{provider, model}` above. Tenant + operator
+                    // defaults are resolved inside `LlmRouter::resolve`.
+                    model: request_model.clone(),
+                    provider: request_provider.clone(),
                     tools: tool_descriptors.clone(),
                     tool_choice: if tool_descriptors.is_empty() { None } else { Some(ToolChoice::Auto) },
                 };
 
-                let mut llm_stream = match llm.chat_stream(request).await {
+                // Wrap the LLM call in the tenant ResolveContext so the
+                // router can read `tenant_id` synchronously inside its
+                // resolver. This is sound because `LlmRouter::chat_stream`
+                // resolves the provider eagerly before returning — the
+                // `LlmChatStream` it hands back already closes over the
+                // resolved client and never re-enters the resolver. If
+                // a future provider deferred resolution into the stream,
+                // we would need to scope the whole stream consumption,
+                // not just the `chat_stream(request)` future.
+                let mut llm_stream = match resolve_ctx.scope(llm.chat_stream(request)).await {
                     Ok(s) => s,
                     Err(e) => {
                         yield Err(e);
@@ -305,22 +393,43 @@ impl Agent for LocalAgent {
                 history.push(ChatMessage::assistant(content, tool_calls.clone()));
 
                 let semaphore = Arc::new(Semaphore::new(config.max_parallel_tool_calls.max(1)));
+                let max_bytes = config.max_tool_result_bytes;
+                // ADR 0010 §`Failure model`: we want recoverable per-call
+                // errors to surface as Tool-role messages so the LLM can
+                // retry on the next iteration. `try_join_all` short-
+                // circuits on the first `Err` and would abort the whole
+                // step (which is what killed the demo's `review` step on
+                // a single malformed `agent_call`). `join_all` preserves
+                // every result; `is_fatal_tool_error` then decides which
+                // ones still abort vs. get fed back to the LLM.
                 let futures = tool_calls.into_iter().map(|call| {
-                    execute_tool_call(
-                        tools.clone(),
-                        ctx.clone(),
-                        call,
-                        config.max_tool_result_bytes,
-                        semaphore.clone(),
-                    )
-                });
-                let tool_results = match try_join_all(futures).await {
-                    Ok(results) => results,
-                    Err(e) => {
-                        yield Err(e);
-                        return;
+                    let tools = tools.clone();
+                    let ctx = ctx.clone();
+                    let semaphore = semaphore.clone();
+                    let call_name = call.name.clone();
+                    let call_id = call.id.clone();
+                    async move {
+                        match execute_tool_call(tools, ctx, call, max_bytes, semaphore).await {
+                            Ok(triple) => Ok(triple),
+                            Err(e) if is_fatal_tool_error(&e) => Err(e),
+                            Err(e) => {
+                                let content = tool_error_payload(&call_name, &e, max_bytes);
+                                Ok((call_id, content, false))
+                            }
+                        }
                     }
-                };
+                });
+                let raw_results = join_all(futures).await;
+                let mut tool_results = Vec::with_capacity(raw_results.len());
+                for r in raw_results {
+                    match r {
+                        Ok(triple) => tool_results.push(triple),
+                        Err(e) => {
+                            yield Err(e);
+                            return;
+                        }
+                    }
+                }
 
                 for (tool_call_id, content, truncated) in tool_results {
                     if truncated {
@@ -444,6 +553,7 @@ mod tests {
             iteration: None,
             delegation_depth: 0,
             delegation_chain: Vec::new(),
+            step_llm_overrides: None,
         }
     }
 
@@ -454,6 +564,7 @@ mod tests {
             description: "test".into(),
             system_prompt: "sys".into(),
             tools,
+            provider: None,
             model: None,
             temperature: 0.3,
             max_tokens: 100,

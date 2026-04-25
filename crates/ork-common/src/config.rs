@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -70,11 +71,89 @@ pub struct AuthConfig {
     pub token_expiry_hours: u64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+/// ADR 0012 §`Decision`. Operator-side LLM provider catalog plus the global
+/// default selector. Per-tenant overrides live in
+/// [`crate::types::TenantId`]-keyed [`TenantSettings`](#) (`ork-core`) and are
+/// merged by `ork_llm::router::LlmRouter` at resolve time.
+///
+/// Mirrors the `mcp_servers` shape (ADR 0010): a flat `Vec` whose `id` field
+/// is the lookup key; a tenant entry with the same `id` replaces — never
+/// merges with — an operator entry. Operators get one mental model.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct LlmConfig {
-    pub provider: String,
+    /// Provider id used when [`crate::types::TenantId`] settings,
+    /// [`crate::config::LlmConfig`]-equivalent agent overrides and the
+    /// `ChatRequest.provider` field are all `None`. Must match the `id` of
+    /// one of [`Self::providers`]; the router fails loud at boot otherwise.
+    #[serde(default)]
+    pub default_provider: Option<String>,
+    /// Operator-defined provider catalog. Empty is allowed (the router will
+    /// hand back a `LlmProvider not configured` error on the first call) so
+    /// `ork-api` can boot a dev instance without any LLM endpoint wired up.
+    #[serde(default)]
+    pub providers: Vec<LlmProviderConfig>,
+}
+
+/// A single OpenAI-compatible endpoint entry. The wire client is
+/// `ork_llm::openai_compatible::OpenAiCompatibleProvider`; this struct is
+/// the operator/tenant on-disk shape.
+///
+/// `id` is the catalog key (case-sensitive), used by `ChatRequest.provider`,
+/// `AgentConfig.provider`, `WorkflowStep.provider`, and the `default_provider`
+/// pointer above.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LlmProviderConfig {
+    pub id: String,
     pub base_url: String,
+    /// Model used when neither the request, the agent, the workflow step,
+    /// nor the tenant default model is set. Per-provider so operators can
+    /// configure `openai` → `gpt-4o-mini` and `anthropic` → `claude-…`
+    /// without repeating themselves on every agent.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// Header map sent on every request to this provider. Names are
+    /// case-preserved (deserialised into a `BTreeMap<String, _>`); values
+    /// are an untagged enum so toml/yaml authors can mix
+    /// `Authorization = { env = "OPENAI_API_KEY" }` with literal-valued
+    /// helper headers.
+    #[serde(default)]
+    pub headers: BTreeMap<String, HeaderValueSource>,
+    /// Optional capability declarations indexed by model name. Consumed by
+    /// `LlmRouter::capabilities` and the agent loop's tool-call gating.
+    #[serde(default)]
+    pub capabilities: Vec<ModelCapabilitiesEntry>,
+}
+
+/// Value for one entry of [`LlmProviderConfig::headers`]. The two variants
+/// have disjoint key sets (`env` vs. `value`), so `#[serde(untagged)]` is
+/// the right fit — no synthetic `kind` field needed in the toml/yaml.
+///
+/// `Env` resolution is eager (at `LlmRouter` construction time) per the ADR
+/// "fail loud at boot" rule; missing env vars surface as a configuration
+/// error during `ork-api`/`ork-cli` startup, not on the first chat request.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(untagged)]
+pub enum HeaderValueSource {
+    Env { env: String },
+    Value { value: String },
+}
+
+/// Per-model capability declaration; ADR 0012 §`Capability negotiation`.
+/// Consumed by [`crate::ports::llm::ModelCapabilities`]-equivalent lookups in
+/// `ork_llm::router::LlmRouter`. Anything not declared here defaults to
+/// "unknown" and the agent loop conservatively assumes no tool calling.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ModelCapabilitiesEntry {
     pub model: String,
+    #[serde(default)]
+    pub supports_tools: bool,
+    #[serde(default)]
+    pub supports_streaming: bool,
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Inclusive max input tokens. `None` ⇒ unknown.
+    #[serde(default)]
+    pub max_context: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -228,11 +307,7 @@ impl Default for AppConfig {
                 jwt_secret: "change-me-in-production".into(),
                 token_expiry_hours: 24,
             },
-            llm: LlmConfig {
-                provider: "minimax".into(),
-                base_url: "https://api.minimax.io/v1".into(),
-                model: "MiniMax-M2.5".into(),
-            },
+            llm: LlmConfig::default(),
             workspace: WorkspaceConfig::default(),
             repositories: Vec::new(),
             kafka: KafkaConfig::default(),
@@ -825,6 +900,92 @@ mod tests {
             }
             other => panic!("expected stdio, got {other:?}"),
         }
+    }
+
+    #[derive(Deserialize)]
+    struct LlmSectionWrapper {
+        #[serde(default)]
+        llm: LlmConfig,
+    }
+
+    #[test]
+    fn llm_section_defaults_to_empty_catalog() {
+        let parsed: LlmSectionWrapper = toml::from_str(r#""#).expect("parse");
+        assert!(parsed.llm.default_provider.is_none());
+        assert!(parsed.llm.providers.is_empty());
+    }
+
+    #[test]
+    fn llm_provider_parses_env_and_literal_headers() {
+        // Mirrors the catalog example in ADR 0012 §`Decision`. The two
+        // header variants (`env`, `value`) are untagged because their keys
+        // are disjoint — no `kind` discriminator needed.
+        let toml_src = r#"
+            [llm]
+            default_provider = "openai"
+
+            [[llm.providers]]
+            id = "openai"
+            base_url = "https://api.openai.com/v1"
+            default_model = "gpt-4o-mini"
+
+            [llm.providers.headers]
+            Authorization = { env = "OPENAI_API_KEY" }
+            X-Trace-Tag = { value = "ork-edge" }
+
+            [[llm.providers.capabilities]]
+            model = "gpt-4o-mini"
+            supports_tools = true
+            supports_streaming = true
+            max_context = 128000
+        "#;
+        let parsed: LlmSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.llm.default_provider.as_deref(), Some("openai"));
+        assert_eq!(parsed.llm.providers.len(), 1);
+        let p = &parsed.llm.providers[0];
+        assert_eq!(p.id, "openai");
+        assert_eq!(p.base_url, "https://api.openai.com/v1");
+        assert_eq!(p.default_model.as_deref(), Some("gpt-4o-mini"));
+
+        // Header keys are case-preserved (BTreeMap with String key, not
+        // a HeaderName-based alphabetical lowercase hammer).
+        let auth = p.headers.get("Authorization").expect("Authorization key");
+        match auth {
+            HeaderValueSource::Env { env } => assert_eq!(env, "OPENAI_API_KEY"),
+            other => panic!("expected env-form, got {other:?}"),
+        }
+        let tag = p.headers.get("X-Trace-Tag").expect("trace tag header");
+        match tag {
+            HeaderValueSource::Value { value } => assert_eq!(value, "ork-edge"),
+            other => panic!("expected literal value, got {other:?}"),
+        }
+
+        assert_eq!(p.capabilities.len(), 1);
+        let c = &p.capabilities[0];
+        assert_eq!(c.model, "gpt-4o-mini");
+        assert!(c.supports_tools);
+        assert!(c.supports_streaming);
+        assert!(!c.supports_vision);
+        assert_eq!(c.max_context, Some(128_000));
+    }
+
+    #[test]
+    fn llm_provider_capabilities_are_optional() {
+        // `[[llm.providers.capabilities]]` is optional; when absent the
+        // router falls through to the conservative "unknown caps" path.
+        let toml_src = r#"
+            [[llm.providers]]
+            id = "anthropic"
+            base_url = "https://api.anthropic.com/v1"
+            [llm.providers.headers]
+            x-api-key = { env = "ANTHROPIC_API_KEY" }
+        "#;
+        let parsed: LlmSectionWrapper = toml::from_str(toml_src).expect("parse");
+        let p = &parsed.llm.providers[0];
+        assert!(p.capabilities.is_empty());
+        assert!(p.default_model.is_none());
+        // Header names that look like raw HTTP headers stay verbatim.
+        assert!(p.headers.contains_key("x-api-key"));
     }
 
     #[test]

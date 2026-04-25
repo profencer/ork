@@ -443,10 +443,10 @@ mod tests {
     #[test]
     fn task_state_snake_case() {
         let t = TaskState::InputRequired;
-        let v = serde_json::to_value(&t).unwrap();
+        let v = serde_json::to_value(t).unwrap();
         assert_eq!(v, serde_json::json!("input_required"));
         let c = TaskState::Canceled;
-        let vc = serde_json::to_value(&c).unwrap();
+        let vc = serde_json::to_value(c).unwrap();
         assert_eq!(vc, serde_json::json!("canceled"));
     }
 }

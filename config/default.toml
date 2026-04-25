@@ -13,10 +13,36 @@ url = "redis://127.0.0.1/"
 jwt_secret = "change-me-in-production"
 token_expiry_hours = 24
 
+# OpenAI-compatible LLM provider catalog (ADR 0012).
+# `default_provider` matches one entry's `id`. Per-tenant overrides live
+# in `tenants.settings.llm_providers`; tenant entries with the same `id`
+# replace the operator entry (id-collision-replaces, mirrors `mcp_servers`
+# from ADR 0010). Header values are an untagged enum:
+# `{ env = "VAR_NAME" }` resolves the env var at boot (and fails loud if
+# unset), `{ value = "literal" }` ships the literal string verbatim.
 [llm]
-provider = "minimax"
-base_url = "https://api.minimax.io/v1"
-model = "MiniMax-M2.7"
+# default_provider = "openai"
+providers = []
+
+# Example provider entry — uncomment and rename `id` to add it to the
+# catalog. The wire client always POSTs to `<base_url>/chat/completions`,
+# so any OpenAI-compatible vendor (Minimax, Anthropic-via-gateway, vLLM,
+# Together, Groq, …) drops in here without code changes.
+#
+# [[llm.providers]]
+# id = "openai"
+# base_url = "https://api.openai.com/v1"
+# default_model = "gpt-4o-mini"
+#
+# [llm.providers.headers]
+# Authorization = { env = "OPENAI_API_KEY" }
+# # X-Trace-Tag = { value = "ork-edge" }   # literal-value variant
+#
+# [[llm.providers.capabilities]]
+# model = "gpt-4o-mini"
+# supports_tools = true
+# supports_streaming = true
+# max_context = 128000
 
 [workspace]
 cache_dir = "~/.ork/workspaces"
