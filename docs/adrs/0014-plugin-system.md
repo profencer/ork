@@ -1,9 +1,10 @@
 # 0014 — Plugin system
 
-- **Status:** Proposed
+- **Status:** Superseded by [`0024`](0024-wasm-plugin-system.md)
 - **Date:** 2026-04-24
 - **Phase:** 3
 - **Relates to:** 0002, 0010, 0013, 0015, 0016, 0023
+- **Superseded by:** [`0024`](0024-wasm-plugin-system.md) — public extensibility moves to a WASM-based plugin model leveraging the wasmops runtime design; the in-tree adapter pattern below remains useful for ork-team-maintained crates but is no longer the recommended path for third-party plugins.
 
 ## Context
 

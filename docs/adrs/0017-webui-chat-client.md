@@ -18,7 +18,7 @@ The Web UI is meaningfully larger and more stateful than other gateways (auth fl
 ork **introduces a Web UI gateway** as two new components:
 
 - `crates/ork-webui/` — backend `axum` service that implements the `Gateway` trait (ADR [`0013`](0013-generic-gateway-abstraction.md)) and exposes a small set of UI-specific HTTP routes plus the SSE bridge.
-- `client/webui/frontend/` — React + Vite + Tailwind SPA that consumes the A2A endpoints from ADR [`0008`](0008-a2a-server-endpoints.md) and the UI-specific routes from `ork-webui`.
+- `client/webui/frontend/` — React + Typescript + Vite + Tailwind SPA that consumes the A2A endpoints from ADR [`0008`](0008-a2a-server-endpoints.md) and the UI-specific routes from `ork-webui`.
 
 The directory layout matches SAM's split (`gateway/http_sse` + `client/webui/frontend`) so contributors moving between the two projects feel at home.
 

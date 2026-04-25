@@ -112,7 +112,7 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0011](0011-native-llm-tool-calling.md) | Native LLM tool-calling | Accepted | 3 |
 | [0012](0012-multi-llm-providers.md) | OpenAI-compatible LLM provider catalog | Accepted | 3 |
 | [0013](0013-generic-gateway-abstraction.md) | Generic Gateway abstraction | Implemented | 3 |
-| [0014](0014-plugin-system.md) | Plugin system | Proposed | 3 |
+| [0014](0014-plugin-system.md) | Plugin system | Superseded by [0024](0024-wasm-plugin-system.md) | 3 |
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Proposed | 3 |
 | [0016](0016-artifact-storage.md) | Artifact / file-management service | Proposed | 3 |
 | [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Proposed | 4 |
@@ -122,6 +122,7 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0021](0021-rbac-scopes.md) | RBAC scopes for agents, tools, artifacts | Proposed | 4 |
 | [0022](0022-observability.md) | Observability: tracing, monitors, task event log | Proposed | 4 |
 | [0023](0023-migration-and-rollout-plan.md) | Migration and rollout plan | Proposed | 4 |
+| [0024](0024-wasm-plugin-system.md) | WASM-based plugin system | Proposed | 3 |
 
 ## Decision graph
 
@@ -154,15 +155,16 @@ flowchart LR
   ADR0008 --> ADR0017[0017 Web UI]
   ADR0008 --> ADR0019
   ADR0008 --> ADR0022[0022 Observability]
-  ADR0010 --> ADR0014[0014 Plugins]
+  ADR0010 --> ADR0024[0024 WASM plugins]
   ADR0010 --> ADR0021
   ADR0011 --> ADR0015[0015 Embeds]
   ADR0011 --> ADR0018
   ADR0011 --> ADR0022
-  ADR0013 --> ADR0014
+  ADR0013 --> ADR0024
   ADR0013 --> ADR0017
   ADR0013 --> ADR0021
-  ADR0014 --> ADR0023[0023 Rollout]
+  ADR0024 --> ADR0023[0023 Rollout]
+  ADR0014[0014 Plugins - superseded] -.->|superseded by| ADR0024
   ADR0015 --> ADR0017
   ADR0016 --> ADR0017
   ADR0016 --> ADR0021
@@ -191,7 +193,8 @@ Each ADR carries its own detailed `Mapping to SAM` section. The matrix below is 
 | [0011](0011-native-llm-tool-calling.md) | ADK-native tool calling inside `SamAgentComponent` |
 | [0012](0012-multi-llm-providers.md) | SAM litellm-style multi-provider config (handled out-of-process via Kong + GPUStack) |
 | [0013](0013-generic-gateway-abstraction.md) | `gateway/generic/component.py` |
-| [0014](0014-plugin-system.md) | `sam plugin` SDK + plugin manifest |
+| [0014](0014-plugin-system.md) | (superseded by [0024](0024-wasm-plugin-system.md)) |
+| [0024](0024-wasm-plugin-system.md) | `sam plugin` SDK + plugin manifest, reframed as a WASM/wasmtime sandboxed runtime |
 | [0015](0015-dynamic-embeds.md) | SAM `«type:expression»` resolver pipeline |
 | [0016](0016-artifact-storage.md) | SAM `ArtifactService` + artifact tools |
 | [0017](0017-webui-chat-client.md) | SAM Web UI gateway (`client/webui/`) |
