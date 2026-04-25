@@ -1,0 +1,21 @@
+{
+  "name": "federation-demo",
+  "version": "1.0",
+  "trigger": { "type": "manual" },
+  "steps": [
+    {
+      "id": "ask_vendor",
+      "agent": "vendor-planner",
+      "tools": [],
+      "prompt_template": "Task: {{input.task}}\n\nPlease ack and outline the next step.\n",
+      "depends_on": []
+    },
+    {
+      "id": "dispatch",
+      "agent": "vendor-planner",
+      "tools": [],
+      "prompt_template": "Continue from the previous reply: {{ask_vendor.output}}\n",
+      "depends_on": ["ask_vendor"]
+    }
+  ]
+}

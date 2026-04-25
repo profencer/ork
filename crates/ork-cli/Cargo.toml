@@ -1,0 +1,27 @@
+[package]
+name = "ork-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ork"
+path = "src/main.rs"
+
+[dependencies]
+ork-agents = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+ork-llm = { workspace = true }
+ork-integrations = { workspace = true }
+ork-persistence = { workspace = true }
+ork-push = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures = { workspace = true }

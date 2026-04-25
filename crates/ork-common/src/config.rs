@@ -1,0 +1,845 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AppConfig {
+    pub server: ServerConfig,
+    pub database: DatabaseConfig,
+    pub redis: RedisConfig,
+    pub auth: AuthConfig,
+    pub llm: LlmConfig,
+    #[serde(default)]
+    pub workspace: WorkspaceConfig,
+    #[serde(default)]
+    pub repositories: Vec<RepositoryEntry>,
+    #[serde(default)]
+    pub kafka: KafkaConfig,
+    #[serde(default)]
+    pub discovery: DiscoveryConfig,
+    /// Static `[[remote_agents]]` entries (ADR-0007). Each entry is materialised
+    /// into a long-lived `A2aRemoteAgent` at boot and re-fetched every
+    /// [`A2aClientToml::card_refresh_interval_secs`].
+    #[serde(default)]
+    pub remote_agents: Vec<RemoteAgentEntryToml>,
+    /// Defaults applied to every `A2aRemoteAgent` constructed from
+    /// `remote_agents`, the discovery subscriber, or workflow inline cards.
+    #[serde(default)]
+    pub a2a_client: A2aClientToml,
+    /// Deployment environment selector. Values are free-form (`dev`, `staging`,
+    /// `prod`); right now only `"dev"` is special — it relaxes the HTTPS-only
+    /// check on `tasks/pushNotificationConfig/set`. Defaults to `"dev"` so
+    /// local runs stay developer-friendly.
+    #[serde(default = "default_env")]
+    pub env: String,
+    /// ADR-0009 push notifications.
+    #[serde(default)]
+    pub push: PushConfig,
+    /// ADR-0010 MCP tool plane. Empty by default so existing dev
+    /// deployments keep booting without an MCP server in sight.
+    #[serde(default)]
+    pub mcp: McpAppConfig,
+}
+
+fn default_env() -> String {
+    "dev".into()
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DatabaseConfig {
+    pub url: String,
+    pub max_connections: u32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RedisConfig {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AuthConfig {
+    pub jwt_secret: String,
+    pub token_expiry_hours: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LlmConfig {
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkspaceConfig {
+    #[serde(default = "default_cache_dir")]
+    pub cache_dir: String,
+    #[serde(default = "default_clone_depth")]
+    pub clone_depth: u32,
+}
+
+fn default_cache_dir() -> String {
+    "~/.ork/workspaces".into()
+}
+
+fn default_clone_depth() -> u32 {
+    1
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            cache_dir: default_cache_dir(),
+            clone_depth: default_clone_depth(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RepositoryEntry {
+    pub name: String,
+    pub url: String,
+    #[serde(default = "default_repo_branch")]
+    pub default_branch: String,
+}
+
+fn default_repo_branch() -> String {
+    "main".into()
+}
+
+/// Kafka client configuration (ADR-0004 hybrid transport).
+///
+/// An empty `brokers` list is the dev-mode default and tells [`ork_eventing::build_client`]
+/// to use the in-memory broadcast backend instead of attempting a real connection.
+#[derive(Debug, Deserialize, Clone)]
+pub struct KafkaConfig {
+    /// Bootstrap brokers (`host:port`). Empty = use in-memory backend (dev / tests).
+    #[serde(default)]
+    pub brokers: Vec<String>,
+
+    /// Topic namespace prefix; matches [`ork_a2a::topics::DEFAULT_NAMESPACE`].
+    #[serde(default = "default_kafka_namespace")]
+    pub namespace: String,
+
+    /// Optional security protocol (`PLAINTEXT`, `SASL_SSL`, etc.). Phase-1 honours only the
+    /// presence of a value; full SASL/TLS wiring lands with ADR-0020.
+    #[serde(default)]
+    pub security_protocol: Option<String>,
+
+    /// Optional SASL mechanism (`OAUTHBEARER`, `SCRAM-SHA-512`, ...). Reserved for ADR-0020.
+    #[serde(default)]
+    pub sasl_mechanism: Option<String>,
+}
+
+fn default_kafka_namespace() -> String {
+    "ork.a2a.v1".into()
+}
+
+impl Default for KafkaConfig {
+    fn default() -> Self {
+        Self {
+            brokers: Vec::new(),
+            namespace: default_kafka_namespace(),
+            security_protocol: None,
+            sasl_mechanism: None,
+        }
+    }
+}
+
+/// Per-agent discovery configuration (ADR-0005).
+///
+/// Every local agent publishes its [`ork_a2a::AgentCard`] to the discovery topic every
+/// `interval_secs`; remote entries learned from the topic expire after
+/// `ttl_multiplier * interval_secs` of silence. The remaining fields enrich the published
+/// card so peers can dial back via Kong (`public_base_url`) and find the human-readable
+/// catalog (`devportal_url`).
+#[derive(Debug, Deserialize, Clone)]
+pub struct DiscoveryConfig {
+    #[serde(default = "default_discovery_interval_secs")]
+    pub interval_secs: u64,
+    #[serde(default = "default_ttl_multiplier")]
+    pub ttl_multiplier: u32,
+    /// Kong-fronted public base URL, e.g. `https://api.example.com/`. Used to build the
+    /// per-agent `card.url`. Cards published without this field have `url = null` and are
+    /// reachable only via the Kafka request topic.
+    #[serde(default)]
+    pub public_base_url: Option<Url>,
+    /// Agent id served by `GET /.well-known/agent-card.json` (the bare default endpoint).
+    /// Unset ⇒ the default endpoint returns 404; per-agent endpoints still work.
+    #[serde(default)]
+    pub default_agent_id: Option<String>,
+    /// Operator organization placed in `card.provider.organization`. Both
+    /// `provider_organization` and `devportal_url` must be set for `provider` to render.
+    #[serde(default)]
+    pub provider_organization: Option<String>,
+    /// DevPortal home placed in `card.provider.url` (and used by the deferred sync ADR).
+    #[serde(default)]
+    pub devportal_url: Option<Url>,
+    /// If true, every published card includes the ork `tenant-required` extension
+    /// (ADR-0020 stub). Off by default in Phase 1.
+    #[serde(default)]
+    pub include_tenant_required_ext: bool,
+}
+
+fn default_discovery_interval_secs() -> u64 {
+    30
+}
+
+fn default_ttl_multiplier() -> u32 {
+    3
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: default_discovery_interval_secs(),
+            ttl_multiplier: default_ttl_multiplier(),
+            public_base_url: None,
+            default_agent_id: None,
+            provider_organization: None,
+            devportal_url: None,
+            include_tenant_required_ext: false,
+        }
+    }
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig {
+                host: "0.0.0.0".into(),
+                port: 8080,
+            },
+            database: DatabaseConfig {
+                url: "postgres://localhost/ork".into(),
+                max_connections: 10,
+            },
+            redis: RedisConfig {
+                url: "redis://127.0.0.1/".into(),
+            },
+            auth: AuthConfig {
+                jwt_secret: "change-me-in-production".into(),
+                token_expiry_hours: 24,
+            },
+            llm: LlmConfig {
+                provider: "minimax".into(),
+                base_url: "https://api.minimax.io/v1".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            workspace: WorkspaceConfig::default(),
+            repositories: Vec::new(),
+            kafka: KafkaConfig::default(),
+            discovery: DiscoveryConfig::default(),
+            remote_agents: Vec::new(),
+            a2a_client: A2aClientToml::default(),
+            env: default_env(),
+            push: PushConfig::default(),
+            mcp: McpAppConfig::default(),
+        }
+    }
+}
+
+/// ADR-0010 §`Configuration` — global MCP tool-plane knobs surfaced to
+/// operators. Empty defaults: `enabled=true` flips on the wiring but
+/// `servers` is empty, so installing the crate without writing any
+/// `[[mcp.servers]]` entries is a no-op.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct McpAppConfig {
+    /// Master switch. When false, `ork-api` skips `McpClient` boot
+    /// entirely so a misconfigured `[mcp]` section can't take down the
+    /// process. Defaults to true so the happy path doesn't need an
+    /// explicit opt-in.
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+    /// `[[mcp.servers]]` list (ADR 0010 third source). Tenant-scoped
+    /// settings still win on id collision; see
+    /// `ork_mcp::McpConfigSources` for the precedence order.
+    #[serde(default)]
+    pub servers: Vec<crate::mcp_config::McpServerConfig>,
+    /// How often `McpClient::refresh_all` runs. The cache TTL on
+    /// descriptors is lazily aligned to this value at boot.
+    #[serde(default = "default_mcp_refresh_interval_secs")]
+    pub refresh_interval_secs: u64,
+    /// Drop an idle MCP session after this many seconds. For stdio
+    /// transports this also kills the child process, freeing memory and
+    /// fds. ADR 0010 §`Negative / costs`.
+    #[serde(default = "default_mcp_session_idle_ttl_secs")]
+    pub session_idle_ttl_secs: u64,
+}
+
+fn default_mcp_enabled() -> bool {
+    true
+}
+fn default_mcp_refresh_interval_secs() -> u64 {
+    300
+}
+fn default_mcp_session_idle_ttl_secs() -> u64 {
+    300
+}
+
+impl Default for McpAppConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mcp_enabled(),
+            servers: Vec::new(),
+            refresh_interval_secs: default_mcp_refresh_interval_secs(),
+            session_idle_ttl_secs: default_mcp_session_idle_ttl_secs(),
+        }
+    }
+}
+
+impl McpAppConfig {
+    pub fn refresh_interval(&self) -> Duration {
+        Duration::from_secs(self.refresh_interval_secs.max(1))
+    }
+    pub fn session_idle_ttl(&self) -> Duration {
+        Duration::from_secs(self.session_idle_ttl_secs.max(1))
+    }
+}
+
+/// ADR-0009 push notifications: knobs surfaced to operators so the delivery
+/// worker, signing-key rotation, and per-tenant cap can be tuned without a
+/// recompile. Defaults match the ADR text verbatim.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PushConfig {
+    /// Hard cap on registered push configs per tenant. Enforced by
+    /// `tasks/pushNotificationConfig/set` before the upsert.
+    #[serde(default = "default_push_max_per_tenant")]
+    pub max_per_tenant: u32,
+    /// Per-attempt HTTP timeout for the delivery worker. Subscribers that
+    /// don't respond inside this window are retried per `retry_schedule_minutes`.
+    #[serde(default = "default_push_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+    /// Maximum concurrent in-flight POSTs across the worker pool.
+    #[serde(default = "default_push_max_concurrency")]
+    pub max_concurrency: usize,
+    /// Retry schedule (in minutes) for failed deliveries. After the final
+    /// retry the payload is written to `a2a_push_dead_letter`.
+    #[serde(default = "default_push_retry_schedule")]
+    pub retry_schedule_minutes: Vec<u64>,
+    /// Days between automatic key rotations. Each new key is published
+    /// immediately and used for new signatures right away.
+    #[serde(default = "default_push_key_rotation_days")]
+    pub key_rotation_days: u32,
+    /// Days the previous signing key stays in JWKS after a rotation so
+    /// subscribers caching by `kid` finish verifying in-flight requests.
+    #[serde(default = "default_push_key_overlap_days")]
+    pub key_overlap_days: u32,
+    /// Days a push config row stays around after the task hits a terminal
+    /// state. Driven by the janitor.
+    #[serde(default = "default_push_config_retention_days")]
+    pub config_retention_days: u32,
+}
+
+fn default_push_max_per_tenant() -> u32 {
+    100
+}
+fn default_push_request_timeout_secs() -> u64 {
+    10
+}
+fn default_push_max_concurrency() -> usize {
+    32
+}
+fn default_push_retry_schedule() -> Vec<u64> {
+    vec![1, 5, 30]
+}
+fn default_push_key_rotation_days() -> u32 {
+    30
+}
+fn default_push_key_overlap_days() -> u32 {
+    7
+}
+fn default_push_config_retention_days() -> u32 {
+    14
+}
+
+impl Default for PushConfig {
+    fn default() -> Self {
+        Self {
+            max_per_tenant: default_push_max_per_tenant(),
+            request_timeout_secs: default_push_request_timeout_secs(),
+            max_concurrency: default_push_max_concurrency(),
+            retry_schedule_minutes: default_push_retry_schedule(),
+            key_rotation_days: default_push_key_rotation_days(),
+            key_overlap_days: default_push_key_overlap_days(),
+            config_retention_days: default_push_config_retention_days(),
+        }
+    }
+}
+
+/// Static `[[remote_agents]]` entry from `config/default.toml` (ADR-0007). The
+/// `auth` payload is `serde(tag = "kind")` with one of the `A2aAuthToml`
+/// variants below.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RemoteAgentEntryToml {
+    pub id: String,
+    pub card_url: Url,
+    #[serde(default)]
+    pub auth: A2aAuthToml,
+}
+
+/// Auth selector for a `[[remote_agents]]` entry. `*_env` fields name the
+/// environment variable that holds the secret — the literal value never lives
+/// in the toml file (mirrors ADR-0007 §"Auth").
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum A2aAuthToml {
+    #[default]
+    None,
+    StaticBearer {
+        value_env: String,
+    },
+    StaticApiKey {
+        header: String,
+        value_env: String,
+    },
+    #[serde(rename = "oauth2_client_credentials")]
+    OAuth2ClientCredentials {
+        token_url: Url,
+        client_id_env: String,
+        client_secret_env: String,
+        #[serde(default)]
+        scopes: Vec<String>,
+    },
+    Mtls {
+        cert_path: PathBuf,
+        key_path: PathBuf,
+    },
+}
+
+/// Defaults for the A2A client (timeouts + card refresh cadence). Mirrors
+/// `A2aClientConfig` in `ork-integrations` so operators see identical knobs in
+/// toml and code.
+#[derive(Debug, Deserialize, Clone)]
+pub struct A2aClientToml {
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+    #[serde(default = "default_stream_idle_timeout_secs")]
+    pub stream_idle_timeout_secs: u64,
+    #[serde(default = "default_card_refresh_interval_secs")]
+    pub card_refresh_interval_secs: u64,
+    #[serde(default = "default_user_agent")]
+    pub user_agent: String,
+    #[serde(default)]
+    pub retry: RetryPolicyToml,
+}
+
+fn default_request_timeout_secs() -> u64 {
+    30
+}
+
+fn default_stream_idle_timeout_secs() -> u64 {
+    300
+}
+
+fn default_card_refresh_interval_secs() -> u64 {
+    3600
+}
+
+fn default_user_agent() -> String {
+    format!("ork/{}", env!("CARGO_PKG_VERSION"))
+}
+
+impl Default for A2aClientToml {
+    fn default() -> Self {
+        Self {
+            request_timeout_secs: default_request_timeout_secs(),
+            stream_idle_timeout_secs: default_stream_idle_timeout_secs(),
+            card_refresh_interval_secs: default_card_refresh_interval_secs(),
+            user_agent: default_user_agent(),
+            retry: RetryPolicyToml::default(),
+        }
+    }
+}
+
+impl A2aClientToml {
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_secs(self.request_timeout_secs)
+    }
+    pub fn stream_idle_timeout(&self) -> Duration {
+        Duration::from_secs(self.stream_idle_timeout_secs)
+    }
+    pub fn card_refresh_interval(&self) -> Duration {
+        Duration::from_secs(self.card_refresh_interval_secs)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RetryPolicyToml {
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_initial_delay_ms")]
+    pub initial_delay_ms: u64,
+    #[serde(default = "default_factor")]
+    pub factor: f32,
+    #[serde(default = "default_max_delay_ms")]
+    pub max_delay_ms: u64,
+}
+
+fn default_max_attempts() -> u32 {
+    3
+}
+fn default_initial_delay_ms() -> u64 {
+    100
+}
+fn default_factor() -> f32 {
+    2.0
+}
+fn default_max_delay_ms() -> u64 {
+    5_000
+}
+
+impl Default for RetryPolicyToml {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            initial_delay_ms: default_initial_delay_ms(),
+            factor: default_factor(),
+            max_delay_ms: default_max_delay_ms(),
+        }
+    }
+}
+
+impl RetryPolicyToml {
+    pub fn initial_delay(&self) -> Duration {
+        Duration::from_millis(self.initial_delay_ms)
+    }
+    pub fn max_delay(&self) -> Duration {
+        Duration::from_millis(self.max_delay_ms)
+    }
+}
+
+impl AppConfig {
+    pub fn load() -> Result<Self, config::ConfigError> {
+        let cfg = config::Config::builder()
+            .add_source(config::File::with_name("config/default").required(false))
+            .add_source(config::Environment::with_prefix("ORK").separator("__"))
+            .build()?;
+
+        cfg.try_deserialize()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kafka_config_default_uses_in_memory() {
+        let cfg = KafkaConfig::default();
+        assert!(cfg.brokers.is_empty());
+        assert_eq!(cfg.namespace, "ork.a2a.v1");
+        assert!(cfg.security_protocol.is_none());
+        assert!(cfg.sasl_mechanism.is_none());
+    }
+
+    #[test]
+    fn kafka_section_parses_with_defaults() {
+        let toml_src = r#"[kafka]"#;
+        let parsed: KafkaSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert!(parsed.kafka.brokers.is_empty());
+        assert_eq!(parsed.kafka.namespace, "ork.a2a.v1");
+    }
+
+    #[test]
+    fn kafka_section_honours_overrides() {
+        let toml_src = r#"
+            [kafka]
+            brokers = ["broker1:9092", "broker2:9092"]
+            namespace = "ork.eu-west.v1"
+            security_protocol = "SASL_SSL"
+            sasl_mechanism = "OAUTHBEARER"
+        "#;
+        let parsed: KafkaSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.kafka.brokers, vec!["broker1:9092", "broker2:9092"]);
+        assert_eq!(parsed.kafka.namespace, "ork.eu-west.v1");
+        assert_eq!(parsed.kafka.security_protocol.as_deref(), Some("SASL_SSL"));
+        assert_eq!(parsed.kafka.sasl_mechanism.as_deref(), Some("OAUTHBEARER"));
+    }
+
+    #[test]
+    fn discovery_defaults_match_adr_0005() {
+        let cfg = DiscoveryConfig::default();
+        assert_eq!(cfg.interval_secs, 30);
+        assert_eq!(cfg.ttl_multiplier, 3);
+        assert!(cfg.public_base_url.is_none());
+        assert!(cfg.default_agent_id.is_none());
+        assert!(cfg.provider_organization.is_none());
+        assert!(cfg.devportal_url.is_none());
+        assert!(!cfg.include_tenant_required_ext);
+    }
+
+    #[test]
+    fn discovery_section_parses_full_payload() {
+        let toml_src = r#"
+            [discovery]
+            interval_secs = 15
+            ttl_multiplier = 4
+            public_base_url = "https://api.example.com/"
+            default_agent_id = "planner"
+            provider_organization = "Example Corp"
+            devportal_url = "https://devportal.example.com/"
+            include_tenant_required_ext = true
+        "#;
+        let parsed: DiscoverySectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.discovery.interval_secs, 15);
+        assert_eq!(parsed.discovery.ttl_multiplier, 4);
+        assert_eq!(
+            parsed.discovery.public_base_url.as_ref().map(Url::as_str),
+            Some("https://api.example.com/")
+        );
+        assert_eq!(
+            parsed.discovery.default_agent_id.as_deref(),
+            Some("planner")
+        );
+        assert_eq!(
+            parsed.discovery.provider_organization.as_deref(),
+            Some("Example Corp")
+        );
+        assert!(parsed.discovery.include_tenant_required_ext);
+    }
+
+    #[derive(Deserialize)]
+    struct DiscoverySectionWrapper {
+        #[serde(default)]
+        discovery: DiscoveryConfig,
+    }
+
+    #[derive(Deserialize)]
+    struct KafkaSectionWrapper {
+        #[serde(default)]
+        kafka: KafkaConfig,
+    }
+
+    #[test]
+    fn remote_agents_section_parses_oauth_and_static_bearer() {
+        let toml_src = r#"
+            [[remote_agents]]
+            id = "vendor-cc"
+            card_url = "https://vendor.example.com/.well-known/agent-card.json"
+            [remote_agents.auth]
+            kind = "oauth2_client_credentials"
+            token_url = "https://auth.vendor.example.com/oauth/token"
+            client_id_env = "VENDOR_CLIENT_ID"
+            client_secret_env = "VENDOR_CLIENT_SECRET"
+            scopes = ["a2a.invoke"]
+
+            [[remote_agents]]
+            id = "vendor-bearer"
+            card_url = "https://other.example.com/.well-known/agent-card.json"
+            [remote_agents.auth]
+            kind = "static_bearer"
+            value_env = "OTHER_BEARER"
+        "#;
+        let parsed: RemoteAgentsWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.remote_agents.len(), 2);
+        match &parsed.remote_agents[0].auth {
+            A2aAuthToml::OAuth2ClientCredentials {
+                client_id_env,
+                scopes,
+                ..
+            } => {
+                assert_eq!(client_id_env, "VENDOR_CLIENT_ID");
+                assert_eq!(scopes, &vec!["a2a.invoke".to_string()]);
+            }
+            other => panic!("expected oauth2_client_credentials, got {other:?}"),
+        }
+        match &parsed.remote_agents[1].auth {
+            A2aAuthToml::StaticBearer { value_env } => assert_eq!(value_env, "OTHER_BEARER"),
+            other => panic!("expected static_bearer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a2a_client_section_uses_defaults_when_absent() {
+        let toml_src = r#"[a2a_client]"#;
+        let parsed: A2aClientWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.a2a_client.request_timeout_secs, 30);
+        assert_eq!(parsed.a2a_client.card_refresh_interval_secs, 3600);
+        assert_eq!(parsed.a2a_client.retry.max_attempts, 3);
+    }
+
+    #[derive(Deserialize)]
+    struct RemoteAgentsWrapper {
+        #[serde(default)]
+        remote_agents: Vec<RemoteAgentEntryToml>,
+    }
+
+    #[derive(Deserialize)]
+    struct A2aClientWrapper {
+        #[serde(default)]
+        a2a_client: A2aClientToml,
+    }
+
+    #[test]
+    fn push_config_defaults_match_adr_0009() {
+        let cfg = PushConfig::default();
+        assert_eq!(cfg.max_per_tenant, 100);
+        assert_eq!(cfg.request_timeout_secs, 10);
+        assert_eq!(cfg.max_concurrency, 32);
+        assert_eq!(cfg.retry_schedule_minutes, vec![1, 5, 30]);
+        assert_eq!(cfg.key_rotation_days, 30);
+        assert_eq!(cfg.key_overlap_days, 7);
+        assert_eq!(cfg.config_retention_days, 14);
+    }
+
+    #[derive(Deserialize)]
+    struct PushSectionWrapper {
+        #[serde(default)]
+        push: PushConfig,
+    }
+
+    #[test]
+    fn push_section_uses_defaults_when_absent() {
+        let toml_src = r#"[push]"#;
+        let parsed: PushSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.push.max_per_tenant, 100);
+        assert_eq!(parsed.push.retry_schedule_minutes, vec![1, 5, 30]);
+    }
+
+    #[test]
+    fn push_section_honours_overrides() {
+        let toml_src = r#"
+            [push]
+            max_per_tenant = 25
+            request_timeout_secs = 20
+            retry_schedule_minutes = [2, 10, 60]
+            key_rotation_days = 45
+            key_overlap_days = 14
+        "#;
+        let parsed: PushSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.push.max_per_tenant, 25);
+        assert_eq!(parsed.push.request_timeout_secs, 20);
+        assert_eq!(parsed.push.retry_schedule_minutes, vec![2, 10, 60]);
+        assert_eq!(parsed.push.key_rotation_days, 45);
+        assert_eq!(parsed.push.key_overlap_days, 14);
+    }
+
+    #[test]
+    fn env_defaults_to_dev() {
+        assert_eq!(AppConfig::default().env, "dev");
+    }
+
+    #[derive(Deserialize)]
+    struct McpSectionWrapper {
+        #[serde(default)]
+        mcp: McpAppConfig,
+    }
+
+    #[test]
+    fn mcp_section_defaults_match_adr_0010() {
+        // No `[mcp]` block at all must yield the ADR-stated defaults.
+        let toml_src = r#""#;
+        let parsed: McpSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert!(parsed.mcp.enabled, "MCP wiring must default to enabled");
+        assert!(parsed.mcp.servers.is_empty());
+        assert_eq!(parsed.mcp.refresh_interval_secs, 300);
+        assert_eq!(parsed.mcp.session_idle_ttl_secs, 300);
+    }
+
+    #[test]
+    fn mcp_section_present_but_empty_uses_defaults() {
+        let toml_src = r#"[mcp]"#;
+        let parsed: McpSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert!(parsed.mcp.enabled);
+        assert!(parsed.mcp.servers.is_empty());
+    }
+
+    #[test]
+    fn mcp_section_parses_streamable_http_oauth_server() {
+        // Mirror of the ADR-0010 YAML example, expressed in toml so it
+        // exercises the same `tag = "type"` serde path the runtime uses.
+        let toml_src = r#"
+            [mcp]
+            enabled = true
+            refresh_interval_secs = 60
+            session_idle_ttl_secs = 120
+
+            [[mcp.servers]]
+            id = "atlassian"
+            [mcp.servers.transport]
+            type = "streamable_http"
+            url = "https://mcp-atlassian.example.com/"
+            [mcp.servers.transport.auth]
+            type = "oauth2_client_credentials"
+            token_url = "https://auth.example.com/oauth/token"
+            client_id_env = "ATLASSIAN_MCP_CLIENT_ID"
+            client_secret_env = "ATLASSIAN_MCP_SECRET"
+            scopes = ["read:jira"]
+        "#;
+        let parsed: McpSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert!(parsed.mcp.enabled);
+        assert_eq!(parsed.mcp.refresh_interval_secs, 60);
+        assert_eq!(parsed.mcp.session_idle_ttl_secs, 120);
+        assert_eq!(parsed.mcp.servers.len(), 1);
+        let srv = &parsed.mcp.servers[0];
+        assert_eq!(srv.id, "atlassian");
+        match &srv.transport {
+            crate::mcp_config::McpTransportConfig::StreamableHttp { url, auth } => {
+                assert_eq!(url.as_str(), "https://mcp-atlassian.example.com/");
+                match auth {
+                    crate::mcp_config::McpAuthConfig::Oauth2ClientCredentials {
+                        client_id_env,
+                        scopes,
+                        ..
+                    } => {
+                        assert_eq!(client_id_env, "ATLASSIAN_MCP_CLIENT_ID");
+                        assert_eq!(scopes, &vec!["read:jira".to_string()]);
+                    }
+                    other => panic!("expected oauth2_client_credentials, got {other:?}"),
+                }
+            }
+            other => panic!("expected streamable_http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mcp_section_parses_stdio_server() {
+        let toml_src = r#"
+            [[mcp.servers]]
+            id = "local-fs"
+            [mcp.servers.transport]
+            type = "stdio"
+            command = "mcp-fs"
+            args = ["--root", "/tenants/a/files"]
+            [mcp.servers.transport.env]
+            FS_TOKEN = "from-env"
+        "#;
+        let parsed: McpSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.mcp.servers.len(), 1);
+        match &parsed.mcp.servers[0].transport {
+            crate::mcp_config::McpTransportConfig::Stdio { command, args, env } => {
+                assert_eq!(command, "mcp-fs");
+                assert_eq!(
+                    args,
+                    &vec!["--root".to_string(), "/tenants/a/files".to_string()]
+                );
+                assert_eq!(env.get("FS_TOKEN"), Some(&"from-env".to_string()));
+            }
+            other => panic!("expected stdio, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mcp_app_config_helpers_clamp_zero_to_one_second() {
+        // Defensive: a misconfigured zero on either knob would otherwise
+        // turn `tokio::time::interval` into a tight CPU loop. The
+        // helpers floor at 1 second so the runtime stays sane even if
+        // the toml is hostile.
+        let cfg = McpAppConfig {
+            enabled: true,
+            servers: Vec::new(),
+            refresh_interval_secs: 0,
+            session_idle_ttl_secs: 0,
+        };
+        assert_eq!(cfg.refresh_interval(), Duration::from_secs(1));
+        assert_eq!(cfg.session_idle_ttl(), Duration::from_secs(1));
+    }
+}

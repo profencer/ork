@@ -1,0 +1,22 @@
+[package]
+name = "ork-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+url = { workspace = true, features = ["serde"] }
+futures = { workspace = true }
+cron = { workspace = true }

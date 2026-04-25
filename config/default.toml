@@ -1,0 +1,129 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+url = "postgres://localhost/ork"
+max_connections = 10
+
+[redis]
+url = "redis://127.0.0.1/"
+
+[auth]
+jwt_secret = "change-me-in-production"
+token_expiry_hours = 24
+
+[llm]
+provider = "minimax"
+base_url = "https://api.minimax.io/v1"
+model = "MiniMax-M2.7"
+
+[workspace]
+cache_dir = "~/.ork/workspaces"
+clone_depth = 1
+
+# Hybrid Kong/Kafka transport (ADR-0004).
+# Empty `brokers` selects the in-memory backend (no Kafka required for dev).
+# Provide a comma-separated list via ORK__KAFKA__BROKERS to talk to a real cluster.
+[kafka]
+brokers = []
+namespace = "ork.a2a.v1"
+# security_protocol = "SASL_SSL"
+# sasl_mechanism = "OAUTHBEARER"
+
+# Remote A2A agents loaded at boot (ADR-0007). Each entry is fetched, cached
+# (Redis), and registered as a long-lived Agent. The `auth` block selects one of
+# `none | static_bearer | static_api_key | oauth2_client_credentials | mtls`;
+# `*_env` fields name the environment variable holding the secret.
+#
+# [[remote_agents]]
+# id = "vendor-planner"
+# card_url = "https://vendor.example.com/.well-known/agent-card.json"
+# [remote_agents.auth]
+# kind = "oauth2_client_credentials"
+# token_url = "https://auth.vendor.example.com/oauth/token"
+# client_id_env = "VENDOR_CLIENT_ID"
+# client_secret_env = "VENDOR_CLIENT_SECRET"
+# scopes = ["a2a.invoke"]
+
+# Defaults applied to every constructed A2aRemoteAgent (ADR-0007).
+[a2a_client]
+request_timeout_secs = 30
+stream_idle_timeout_secs = 300
+card_refresh_interval_secs = 3600
+# user_agent = "ork/0.1.0"
+# [a2a_client.retry]
+# max_attempts = 3
+# initial_delay_ms = 100
+# factor = 2.0
+# max_delay_ms = 5000
+
+# Per-agent A2A discovery (ADR-0005).
+# Every local agent publishes its AgentCard to ork.a2a.v1.discovery.agentcards every
+# `interval_secs`; remote entries learned from the topic expire after
+# `ttl_multiplier * interval_secs` of silence.
+[discovery]
+interval_secs = 30
+ttl_multiplier = 3
+# Public Kong base URL used to build per-agent card URLs (https://<base>/a2a/agents/<id>).
+# public_base_url = "https://api.example.com/"
+# default_agent_id = "planner"
+# provider_organization = "Example Corp"
+# devportal_url = "https://devportal.example.com/"
+# include_tenant_required_ext = false
+
+# Repositories for change-plan / code-search workflows (HTTPS + git CLI).
+[[repositories]]
+name = "lmru--devportal-platformeco-channel"
+url = "https://github.lmru.tech/adeo/lmru--devportal-platformeco-channel.git"
+default_branch = "main"
+
+[[repositories]]
+name = "devportal-lmru-front"
+url = "https://github.lmru.tech/adeo/devportal-lmru-front.git"
+default_branch = "main"
+
+[[repositories]]
+name = "developer-portal-meta-lmru"
+url = "https://github.lmru.tech/adeo/developer-portal-meta-lmru.git"
+default_branch = "main"
+
+[[repositories]]
+name = "lmru--devportal-kong-sync"
+url = "https://github.lmru.tech/adeo/lmru--devportal-kong-sync.git"
+default_branch = "main"
+
+# MCP tool plane (ADR-0010). Tools registered here are exposed to agents
+# under `mcp:<server_id>.<tool_name>`. Tenant-scoped overrides in
+# `tenants.settings.mcp_servers` take precedence on id collision.
+#
+# Defaults: enabled = true, refresh_interval_secs = 300, session_idle_ttl_secs = 300.
+# Disable globally with `enabled = false`. Secrets stay in env vars
+# referenced by `*_env` fields (envelope encryption is deferred to
+# ADR-0020, see ADR-0010 §`Negative / costs`).
+#
+# [mcp]
+# enabled = true
+# refresh_interval_secs = 300
+# session_idle_ttl_secs = 300
+#
+# Streamable-HTTP server with OAuth2 client-credentials (Atlassian-style):
+# [[mcp.servers]]
+# id = "atlassian"
+# [mcp.servers.transport]
+# type = "streamable_http"
+# url = "https://mcp-atlassian.example.com/"
+# [mcp.servers.transport.auth]
+# type = "oauth2_client_credentials"
+# token_url = "https://auth.example.com/oauth/token"
+# client_id_env = "ATLASSIAN_MCP_CLIENT_ID"
+# client_secret_env = "ATLASSIAN_MCP_SECRET"
+# scopes = ["read:jira", "write:jira"]
+#
+# Stdio server (mcp-fs as a child process):
+# [[mcp.servers]]
+# id = "local-fs"
+# [mcp.servers.transport]
+# type = "stdio"
+# command = "mcp-fs"
+# args = ["--root", "/tenants/files"]

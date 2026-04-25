@@ -1,0 +1,9 @@
+.env
+logs/
+data/
+.last-hooks.json
+.*.pid
+peer-agent/target/
+webhook-receiver/target/
+peer-agent/Cargo.lock
+webhook-receiver/Cargo.lock

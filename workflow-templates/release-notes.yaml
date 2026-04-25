@@ -1,0 +1,64 @@
+name: release-notes
+version: "1.0"
+trigger:
+  type: manual
+
+steps:
+  - id: gather_changes
+    agent: researcher
+    tools:
+      - github_merged_prs
+      - gitlab_merged_prs
+    prompt_template: >
+      Fetch all merged pull requests / merge requests between the tags
+      {{from_tag}} and {{to_tag}} for the specified repositories.
+      Include PR numbers, titles, authors, labels, and descriptions.
+    depends_on: []
+
+  - id: categorize
+    agent: planner
+    tools: []
+    prompt_template: >
+      Analyze these merged pull requests and categorize each one into:
+      - Features (new functionality)
+      - Bug Fixes (defect corrections)
+      - Breaking Changes (backward-incompatible changes)
+      - Performance (optimization improvements)
+      - Documentation (doc-only changes)
+      - Other (maintenance, refactoring, CI/CD)
+
+      For each item, include the PR number, title, and author.
+
+      Pull requests:
+      {{gather_changes.output}}
+    depends_on:
+      - gather_changes
+
+  - id: write_notes
+    agent: writer
+    tools: []
+    prompt_template: >
+      Generate professional release notes using the categorized changes below.
+      Use markdown formatting with version header, date, and categorized sections.
+      Include PR/MR numbers as links and credit contributors.
+
+      Categorized changes:
+      {{categorize.output}}
+    depends_on:
+      - categorize
+
+  - id: review
+    agent: reviewer
+    tools: []
+    prompt_template: >
+      Review these release notes for accuracy and completeness.
+      Verify that all merged PRs are accounted for and correctly categorized.
+      Check that the formatting follows standard release note conventions.
+
+      Release notes:
+      {{write_notes.output}}
+    depends_on:
+      - write_notes
+    condition:
+      on_pass: complete
+      on_fail: write_notes

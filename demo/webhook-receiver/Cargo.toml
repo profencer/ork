@@ -1,0 +1,26 @@
+# Tiny push-notification receiver used by the ork demo (stage 7).
+#
+# Lives outside the main workspace (see `exclude` in the root Cargo.toml).
+# Keeps state in-memory: receives POST /hook, decodes the JWS header
+# without verifying the signature (the signing keys belong to ork-api so
+# verifying them would just be a spec compliance lap), pretty-prints the
+# delivery to stdout, and persists the last N deliveries to
+# `demo/.last-hooks.json` for the stage script to inspect.
+
+[package]
+name = "demo-webhook-receiver"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+parking_lot = "0.12"

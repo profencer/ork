@@ -1,0 +1,31 @@
+== Stage 5 — MCP tool plane (ADR 0010) ==
+
+[info] evidence from demo/logs/ork-api.log that the MCP layer was wired:
+
+2026-04-24T19:53:01.421Z  INFO ork_api::main: composing tool executor with_mcp (ADR-0010)
+2026-04-24T19:53:01.422Z  INFO ork_mcp::client: starting MCP descriptor refresh loop interval=60s
+2026-04-24T19:53:02.103Z  INFO ork_mcp::transport::stdio: spawned stdio child server id=everything cmd=npx args=["-y","@modelcontextprotocol/server-everything","stdio"]
+2026-04-24T19:53:02.118Z  INFO ork_mcp::transport::stdio: spawned stdio child server id=local-fs cmd=npx args=["-y","@modelcontextprotocol/server-filesystem","./demo/sandbox"]
+2026-04-24T19:53:02.812Z  INFO ork_mcp::client: refreshed descriptors tenant=default servers=2 tools=24
+
+[info] demo MCP servers (from demo/config/default.toml):
+  id      = "everything"
+  type    = "stdio"
+  command = "npx"
+  args    = ["-y", "@modelcontextprotocol/server-everything", "stdio"]
+  id      = "local-fs"
+  type    = "stdio"
+  command = "npx"
+  args    = ["-y", "@modelcontextprotocol/server-filesystem", "./demo/sandbox"]
+
+[info] round-tripping mcp:everything.echo via the same McpClient ork-api uses
+[info] (this re-uses the existing integration test under crates/ork-mcp/tests/)
+
+running 1 test
+test stdio_everything_echo ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+== Stage 5 done ==
+
+[info] next: make -C demo demo-stage-6

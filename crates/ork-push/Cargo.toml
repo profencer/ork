@@ -1,0 +1,52 @@
+[package]
+name = "ork-push"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+ork-eventing = { workspace = true }
+
+# Async / runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# HTTP client (reused from boot)
+reqwest = { workspace = true }
+
+# Error / logging
+thiserror = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+
+# Common types
+chrono = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+
+# JWS (already used elsewhere for verifying inbound JWTs)
+jsonwebtoken = { workspace = true }
+
+# Crypto: AES-GCM envelope encryption + HKDF KEK derivation
+aes-gcm = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+
+# ES256 keypair generation + JWK serialisation
+p256 = { workspace = true }
+zeroize = "1"
+
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }

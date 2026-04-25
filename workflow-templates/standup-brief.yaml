@@ -1,0 +1,46 @@
+name: standup-brief
+version: "1.0"
+trigger:
+  type: schedule
+  cron: "0 9 * * 1-5"
+
+steps:
+  - id: gather_data
+    agent: researcher
+    tools:
+      - github_recent_activity
+      - gitlab_recent_activity
+    prompt_template: >
+      Gather all commits, pull requests, merge requests, and issues
+      from the last 24 hours for the configured repositories.
+      Organize the data by repository and type (commits, PRs, issues).
+    depends_on: []
+
+  - id: write_brief
+    agent: writer
+    tools: []
+    prompt_template: >
+      Write a concise daily standup brief from the following development activity data.
+      Format it with clear sections: Key Highlights, Pull Requests, Recent Commits, and Open Issues.
+      Keep it under 500 words.
+
+      Data:
+      {{gather_data.output}}
+    depends_on:
+      - gather_data
+
+  - id: review
+    agent: reviewer
+    tools: []
+    prompt_template: >
+      Review this standup brief for completeness and accuracy.
+      Verify that all important items from the source data are included.
+      Check formatting and professional tone.
+
+      Brief:
+      {{write_brief.output}}
+    depends_on:
+      - write_brief
+    condition:
+      on_pass: complete
+      on_fail: write_brief

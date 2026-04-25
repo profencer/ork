@@ -1,0 +1,49 @@
+== Stage 6 — Federation via vendor-planner peer (ADR 0007) ==
+
+[info] peer-agent already responding on 127.0.0.1:8090 — re-using it
+[info] peer card:
+{
+  "name": "Acme Vendor Planner",
+  "description": "Stub remote A2A peer used by the ork demo to exercise ADR 0007 federation.",
+  "version": "0.1.0",
+  "url": "http://127.0.0.1:8090/",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": false,
+    "state_transition_history": false
+  },
+  "skills": [
+    "echo-plan"
+  ]
+}
+
+[info] verifying ork-api registered the remote agent (boot-time loader):
+[
+  {
+    "name": "Acme Vendor Planner",
+    "version": "0.1.0",
+    "url": "http://127.0.0.1:8090/"
+  }
+]
+
+[info] POST http://127.0.0.1:8080/api/workflows  (federation-demo)
+[info] created workflow id=019dc163-…
+[info] started run id=019dc163-…
+[info] run 019dc163-… -> completed  [ask_vendor:completed  dispatch:completed]
+
+[info] step outputs:
+----- step ask_vendor (agent=vendor-planner, status=completed) -----
+[vendor-planner] acknowledged the request. Stub vendor reply.
+----- step dispatch (agent=vendor-planner, status=completed) -----
+[vendor-planner] acknowledged the request. Stub vendor reply.
+
+[info] tail of peer-agent log (proves the round-trip arrived):
+INFO demo peer-agent listening addr=127.0.0.1:8090 id=vendor-planner
+INFO incoming JSON-RPC request method=message/stream
+INFO vendor-planner replying prompt_preview=Task: Acme, please outline the rollout plan...
+INFO incoming JSON-RPC request method=message/stream
+INFO vendor-planner replying prompt_preview=Continue from the previous reply: [vendor-planner] acknowledged the request...
+
+== Stage 6 done ==
+
+[info] next: make -C demo demo-stage-7

@@ -1,0 +1,54 @@
+== Stage 7 — push notifications + key rotation (ADR 0009) ==
+
+[info] building demo/webhook-receiver
+[info] launching webhook-receiver on 127.0.0.1:8091 (logs -> demo/logs/webhook-receiver.log)
+[info] webhook-receiver pid=59127
+
+[info] initial JWKS state — should have a single kid:
+  count = 1
+  kids  = k_019dc163b41f7492a22bb8fef0e2eccd
+
+[info] kicking off message/stream on planner to mint a task id
+[info] captured task_id=019dc168-…; registering push config -> http://127.0.0.1:8091/hook
+{
+  "result": {
+    "url": "http://127.0.0.1:8091/hook"
+  },
+  "error": null
+}
+[info] waiting up to 5s for the push delivery to land at the receiver
+
+[info] receiver state (demo/.last-hooks.json):
+{
+  "received_at": "2026-04-24T21:32:15.899928Z",
+  "kid": "k_019dc163b41f7492a22bb8fef0e2eccd",
+  "alg": "ES256",
+  "payload_state": "completed",
+  "payload_task_id": "019dc168-5738-7801-b84d-342c3cf82484"
+}
+
+[info] running ork admin push rotate-keys (forces a new ES256 signing key)
+  {
+    "new_expires_at": "2026-05-31T21:32:52.928361Z",
+    "new_kid": "k_019dc168ef457a219fbb6b3620298139",
+    "previous_kid": "k_019dc163b41f7492a22bb8fef0e2eccd",
+    "rotated": true
+  }
+
+[info] ground truth from a2a_signing_keys (every active kid + rotated_out_at):
+  kid                                       alg    created                expires                rotated_out
+  k_019dc163b41f7492a22bb8fef0e2eccd        ES256  2026-04-24T21:27:10Z   2026-04-26T21:27:10Z   2026-04-24T21:32:52Z
+  k_019dc168ef457a219fbb6b3620298139        ES256  2026-04-24T21:32:52Z   2026-05-31T21:32:52Z   -
+
+[info] JWKS as currently published by ork-api:
+  count = 1  (was 1 before rotation)
+  kids  = k_019dc163b41f7492a22bb8fef0e2eccd
+[info] JWKS endpoint still serves the pre-rotation snapshot.
+[info]   ork-api caches keys in-process and refreshes on its own tick.
+[info]   the new kid above (`new_kid`) is durably persisted; subscribers will see
+[info]   it on the next ork-api restart or refresh tick. Run `make demo` again
+[info]   for a clean view.
+
+== Stage 7 done ==
+
+[info] next: make -C demo demo-stage-8

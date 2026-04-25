@@ -1,0 +1,138 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ork-a2a",
+    "crates/ork-api",
+    "crates/ork-cli",
+    "crates/ork-core",
+    "crates/ork-agents",
+    "crates/ork-cache",
+    "crates/ork-eventing",
+    "crates/ork-integrations",
+    "crates/ork-llm",
+    "crates/ork-mcp",
+    "crates/ork-persistence",
+    "crates/ork-common",
+    "crates/ork-push",
+]
+exclude = [
+    "demo/peer-agent",
+    "demo/webhook-receiver",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+# Internal crates
+ork-a2a = { path = "crates/ork-a2a" }
+ork-api = { path = "crates/ork-api" }
+ork-cli = { path = "crates/ork-cli" }
+ork-core = { path = "crates/ork-core" }
+ork-agents = { path = "crates/ork-agents" }
+ork-cache = { path = "crates/ork-cache" }
+ork-eventing = { path = "crates/ork-eventing" }
+ork-integrations = { path = "crates/ork-integrations" }
+ork-llm = { path = "crates/ork-llm" }
+ork-mcp = { path = "crates/ork-mcp" }
+ork-persistence = { path = "crates/ork-persistence" }
+ork-common = { path = "crates/ork-common" }
+ork-push = { path = "crates/ork-push" }
+
+# Web framework
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# Auth
+jsonwebtoken = "9"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Streams
+futures = "0.3"
+async-stream = "0.3"
+
+# GitHub
+octocrab = "0.44"
+
+# Utilities
+url = "2"
+base64 = "0.22"
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+config = "0.14"
+async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Scheduling
+cron = "0.15"
+
+# Eventing / Kafka (pure-Rust client per ADR 0004)
+rskafka = { version = "0.6", default-features = false }
+bytes = "1"
+
+# A2A remote agent (ADR 0007)
+eventsource-stream = "0.2"
+secrecy = { version = "0.10", features = ["serde"] }
+backon = "1"
+
+# MCP client (ADR 0010). Pinned to 0.16.x; transports enabled match the three
+# documented in the ADR (`stdio`, `streamable-http`, legacy `sse`). The
+# `client` feature pulls the `RoleClient` API; `transport-child-process`
+# brings the `tokio` child-process integration; the two HTTP-side features
+# default to the `reqwest` driver so we keep a single HTTP stack process-wide.
+# Note: `server` is enabled because rmcp 0.16's `macros` feature emits code
+# that calls into `handler::server::tool::schema_for_*`. We don't host an MCP
+# server in production code; the feature is only needed to satisfy the
+# crate-internal tool/handler macro expansion.
+rmcp = { version = "0.16", default-features = false, features = [
+    "macros",
+    "server",
+    "client",
+    "client-side-sse",
+    "transport-streamable-http-client-reqwest",
+    "transport-child-process",
+    "reqwest",
+] }
+
+# Push notifications (ADR 0009): JWS signing + envelope encryption
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "jwk", "pem", "std"] }
+
+# HTTP mocking for tests
+wiremock = "0.6"
+# Containerised integration tests (ADR-0007 reference-server-it). Default-off,
+# only consumed under `--features reference-server-it` so CI can opt into the
+# heavier docker-backed run.
+testcontainers = "0.23"
+

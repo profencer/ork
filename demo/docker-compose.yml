@@ -1,0 +1,40 @@
+# ork demo compose stack.
+#
+# Brings up just the data-plane bits ork needs: Postgres for persistence and
+# Redis for the SSE replay buffer + remote-agent card cache. Kafka is NOT in
+# this stack — `[kafka].brokers = []` in `demo/config/ork.demo.toml` selects
+# the in-memory eventing backend so the demo runs comfortably on a laptop.
+#
+# Ports are remapped to non-standard host ports (5433 / 6380) so the demo
+# never collides with a developer's existing local Postgres/Redis.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ork-demo-postgres
+    environment:
+      POSTGRES_USER: ork
+      POSTGRES_PASSWORD: ork
+      POSTGRES_DB: ork_demo
+    ports:
+      - "5433:5432"
+    volumes:
+      - ork_demo_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ork -d ork_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: ork-demo-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  ork_demo_pg:

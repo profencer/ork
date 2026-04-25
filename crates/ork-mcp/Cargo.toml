@@ -1,0 +1,57 @@
+[package]
+name = "ork-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ork-a2a = { workspace = true }
+ork-agents = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+rmcp = { workspace = true }
+# rmcp 0.16 pins `reqwest = 0.13.2`. To keep `StreamableHttpClient` happy
+# (the trait is `impl`'d only for *that* `reqwest::Client` type), we use the
+# matching 0.13 line internally instead of the workspace's 0.12. The public
+# API surface of `ork-mcp` doesn't expose `reqwest::Client` so callers
+# (`ork-api`) don't see this version skew.
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "stream",
+    "form",
+    "rustls",
+    "http2",
+    "charset",
+] }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }
+tower = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util", "macros"] }
+ork-common = { workspace = true }
+serde_json = { workspace = true }
+# `transport-streamable-http-server` is only needed by the in-process
+# integration test (`tests/streamable_http_in_process.rs`) — keeping it in
+# dev-dependencies avoids paying the axum-server compile cost on the
+# production build path.
+rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
+schemars = { version = "1", features = ["chrono04"] }
+
+[features]
+default = []
+# ADR-0010 §`Stdio servers`. Off by default: spawning the npm
+# `@modelcontextprotocol/server-everything` requires `npx` + node on the
+# runner, so CI flips this on for the `mcp-stdio-it` matrix entry only.
+mcp-stdio-it = []

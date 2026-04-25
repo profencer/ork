@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": "11111111-1111-7111-8111-111111111201",
+    "context_id": "11111111-1111-7111-8111-111111111202",
+    "status": { "state": "submitted" },
+    "history": [],
+    "artifacts": [],
+    "metadata": null
+  }
+}

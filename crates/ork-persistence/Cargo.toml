@@ -1,0 +1,21 @@
+[package]
+name = "ork-persistence"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+sqlx = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }

@@ -1,0 +1,26 @@
+== Stage 0 — Bootstrap ==
+
+[info] docker compose up -d (postgres + redis)
+[info] waiting for postgres health
+[info] waiting for redis health
+[info] applying 001_initial_schema.sql
+[info] applying 002_a2a_tasks.sql
+[info] applying 003_workflows.sql
+[info] applying 004_push_notifications.sql
+[info] applying 005_oauth_client_registry.sql
+[info] applying 006_indexes.sql
+[info] applying 007_oauth_state.sql
+[info] applying 008_remote_agents.sql
+[info] applying 009_outbox.sql
+[info] launching ork-api on 127.0.0.1:8080  (logs -> demo/logs/ork-api.log)
+[info] ork-api pid=58231
+[info] waiting for ork-api healthcheck...
+[info] ork-api is healthy.
+[info] minting tenant + JWT
+[info] tenant id: 8b2c0e92-3c8d-4d78-b8b7-1f4ad1a3a9d2
+[info] JWT minted (HS256, 24h, scopes=admin,a2a:read,a2a:write,workflow:read,workflow:write)
+[info] wrote demo/.env (TENANT_ID, JWT, BASE_URL)
+
+== Stage 0 done ==
+
+[info] next: make -C demo demo-stage-1

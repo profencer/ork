@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [
+        { "kind": "text", "text": "Hello" }
+      ],
+      "message_id": "550e8400-e29b-41d4-a716-446655440001",
+      "task_id": null,
+      "context_id": "550e8400-e29b-41d4-a716-446655440002",
+      "metadata": null
+    }
+  }
+}

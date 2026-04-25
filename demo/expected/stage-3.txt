@@ -1,0 +1,33 @@
+== Stage 3 — message/stream + SSE replay (ADR 0008) ==
+
+[info] POST http://127.0.0.1:8080/a2a/agents/planner  (message/stream, --max-time 2)
+[info] we'll cut the connection after 2s and reconnect via the replay endpoint.
+
+[info] captured 3 data chunks before disconnect:
+event: message
+id: 0
+data: {"jsonrpc":"2.0","id":"demo-stream-1","result":{"task_id":"5b8e91d4-...","kind":"status_update","status":{"state":"Working","timestamp":"2026-04-24T19:55:11Z"},"final":false}}
+
+event: message
+id: 1
+data: {"jsonrpc":"2.0","id":"demo-stream-1","result":{"task_id":"5b8e91d4-...","kind":"message","message":{"role":"assistant","parts":[{"kind":"text","text":"Drafting plan..."}],"message_id":"..."}}}
+
+event: message
+id: 2
+data: {"jsonrpc":"2.0","id":"demo-stream-1","result":{"task_id":"5b8e91d4-...","kind":"status_update","status":{"state":"Working","timestamp":"2026-04-24T19:55:12Z"},"final":false}}
+
+[info] captured task id: 5b8e91d4-2c4f-4b53-8b9c-3e8e3f7a1d12
+
+[info] GET http://127.0.0.1:8080/a2a/agents/planner/stream/5b8e91d4-2c4f-4b53-8b9c-3e8e3f7a1d12
+[info] this is the replay endpoint — same task, same buffered events.
+
+[info] replay returned 4 data chunks:
+event: message
+id: 0
+data: {"jsonrpc":"2.0","id":"...","result":{"task_id":"5b8e91d4-...","kind":"status_update","status":{"state":"Working",...},"final":false}}
+... (further events from the replay buffer in order) ...
+
+== Stage 3 done ==
+
+[info] see full output in demo/logs/stage-3-initial-stream.txt and demo/logs/stage-3-replay.txt
+[info] next: make -C demo demo-stage-4

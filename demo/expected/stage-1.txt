@@ -1,0 +1,31 @@
+== Stage 1 — ork CLI: standup brief ==
+
+[info] running: cargo run -q -p ork-cli -- standup tokio-rs/tokio --hours 168 --raw
+[info] (this hits the live GitHub API; output is verbatim from ork-cli)
+
+# Standup for tokio-rs/tokio (last 168h)
+
+## Activity
+- 47 commits across 12 contributors
+- 9 pull requests merged
+- 23 pull requests opened
+- 14 issues opened, 18 closed
+
+## Top contributors
+- alice            : 12 commits
+- bob              :  9 commits
+- carol            :  6 commits
+
+## Recently merged PRs
+- #6843  Fix race in `JoinSet::abort_all`               (alice)
+- #6839  io: relax requirements on `AsyncReadExt::read` (bob)
+- #6831  metrics: add `runtime_thread_count` gauge      (carol)
+
+## Open PRs needing review
+- #6850  rt: introduce per-worker overflow queue        (dave)
+- #6848  sync: rework Notify wake batching              (eve)
+...
+
+== Stage 1 done ==
+
+[info] next: make -C demo demo-stage-2

@@ -1,0 +1,17 @@
+== Stage 8 — Teardown ==
+
+[info] stopping ork-api (pid 58231)
+[info] stopping peer-agent (pid 58944)
+[info] stopping webhook-receiver (pid 59127)
+[info] docker compose down -v
+ Container ork-demo-redis     Stopping
+ Container ork-demo-postgres  Stopping
+ Container ork-demo-redis     Removed
+ Container ork-demo-postgres  Removed
+ Volume    ork-demo_pgdata    Removed
+ Network   ork-demo_default   Removed
+[info] removing demo/.env, demo/logs, demo/data, demo/.last-hooks.json
+
+== Stage 8 done ==
+
+[info] the demo is fully torn down. `make demo` will start fresh.

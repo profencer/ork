@@ -1,0 +1,112 @@
+# Demo overlay over `config/default.toml`. Values that differ from upstream
+# defaults carry an inline comment explaining why.
+#
+# Loaded by stage 0 via `ORK_CONFIG_FILE=demo/config/ork.demo.toml` (see
+# `demo/scripts/stage-0-bootstrap.sh`). The `ORK__*` env-var overrides emitted
+# by stage 0 win over this file when both name the same key (matches the
+# `config` crate's source ordering in `AppConfig::load`).
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+# Demo Postgres lives in compose on host port 5433 (see demo/docker-compose.yml).
+[database]
+url = "postgres://ork:ork@127.0.0.1:5433/ork_demo"
+max_connections = 5
+
+# Demo Redis lives in compose on host port 6380.
+[redis]
+url = "redis://127.0.0.1:6380/"
+
+[auth]
+jwt_secret = "ork-demo-secret-change-me"
+token_expiry_hours = 24
+
+[llm]
+provider = "minimax"
+base_url = "https://api.minimax.io/v1"
+model = "MiniMax-M2.7"
+
+[workspace]
+cache_dir = "demo/data/workspaces"
+clone_depth = 1
+
+# In-memory eventing — no Kafka in compose.
+[kafka]
+brokers = []
+namespace = "ork.a2a.v1"
+
+# A2A client tuning. Demo cards are tiny + local, so refresh every minute so
+# the federation stage (stage 6) sees the peer card almost immediately.
+[a2a_client]
+request_timeout_secs = 10
+stream_idle_timeout_secs = 60
+card_refresh_interval_secs = 60
+
+# Discovery: publish own cards every 10s so stage 2's `GET /a2a/agents` shows
+# all five built-in agents quickly. Set `default_agent_id = "planner"` so the
+# bare `/.well-known/agent-card.json` route resolves (used in stage 2).
+[discovery]
+interval_secs = 10
+ttl_multiplier = 6
+default_agent_id = "planner"
+provider_organization = "ork demo"
+
+# A single, well-known TypeScript SDK we use as the planner's playground.
+# Picked because it (a) clones quickly, (b) has obvious surface area
+# (constructor options, HTTP client, streaming) for the agents to reason
+# about, and (c) is real code rather than a mock — so the markdown plan
+# the writer produces is grounded in actual file paths and APIs.
+[[repositories]]
+name = "anthropic-sdk-typescript"
+url = "https://github.com/anthropics/anthropic-sdk-typescript.git"
+default_branch = "main"
+
+# ADR-0007 federation target — the stub vendor planner that stage 6 brings
+# up on :8090. The peer card is served at `/.well-known/agent-card.json` and
+# requires no auth (`kind = "none"`).
+[[remote_agents]]
+id = "vendor-planner"
+card_url = "http://127.0.0.1:8090/.well-known/agent-card.json"
+[remote_agents.auth]
+kind = "none"
+
+# ADR-0009 push notifications. The retry schedule is squashed to `[0, 1]`
+# minutes so stage 7's "watch a JWS land" demo doesn't have to wait the
+# default 1 minute for the first attempt.
+[push]
+max_per_tenant = 100
+request_timeout_secs = 5
+max_concurrency = 4
+retry_schedule_minutes = [0, 1]
+key_rotation_days = 1
+key_overlap_days = 1
+config_retention_days = 7
+
+# ADR-0010 MCP tool plane. Two stdio servers wired by default:
+#
+# - `everything` — the official `@modelcontextprotocol/server-everything`
+#   reference server, spawned via `npx`. Stage 5 calls `mcp:everything.echo`
+#   to prove the routing path end-to-end.
+# - `local-fs` — read-only filesystem MCP pointed at `demo/sandbox/`. Useful
+#   for ad-hoc exploration; the demo doesn't drive it directly but it
+#   surfaces in `/a2a/agents/<id>` capability listings.
+[mcp]
+enabled = true
+refresh_interval_secs = 60
+session_idle_ttl_secs = 120
+
+[[mcp.servers]]
+id = "everything"
+[mcp.servers.transport]
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-everything", "stdio"]
+
+[[mcp.servers]]
+id = "local-fs"
+[mcp.servers.transport]
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "./demo/sandbox"]

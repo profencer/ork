@@ -1,0 +1,38 @@
+== Stage 2 — A2A cards and registry (ADR 0003 + 0005) ==
+
+[info] GET http://127.0.0.1:8080/.well-known/agent-card.json (public, no auth)
+{
+  "name": "Planner",
+  "description": "Decomposes high-level goals into structured tasks.",
+  "version": "0.1.0",
+  "url": "http://127.0.0.1:8080/a2a/agents/planner",
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": true,
+    "state_transition_history": true
+  },
+  "skills": [
+    "decompose_task",
+    "plan_change"
+  ]
+}
+
+[info] GET /.well-known/agent-card.json for each built-in role:
+  planner      -> Planner       (2 skills, streaming=true)
+  researcher   -> Researcher    (2 skills, streaming=true)
+  writer       -> Writer        (2 skills, streaming=true)
+  reviewer     -> Reviewer      (2 skills, streaming=true)
+  synthesizer  -> Synthesizer   (1 skills, streaming=true)
+
+[info] GET http://127.0.0.1:8080/a2a/agents (protected — requires Bearer)
+[
+  { "name": "Planner",      "version": "0.1.0", "streaming": true, "push": true, "skills": 2 },
+  { "name": "Researcher",   "version": "0.1.0", "streaming": true, "push": true, "skills": 2 },
+  { "name": "Writer",       "version": "0.1.0", "streaming": true, "push": true, "skills": 2 },
+  { "name": "Reviewer",     "version": "0.1.0", "streaming": true, "push": true, "skills": 2 },
+  { "name": "Synthesizer",  "version": "0.1.0", "streaming": true, "push": true, "skills": 1 }
+]
+
+== Stage 2 done ==
+
+[info] next: make -C demo demo-stage-3

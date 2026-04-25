@@ -1,0 +1,9 @@
+# Stub vendor-planner identity served by demo/peer-agent on :8090.
+# Stage 6 reads this file to pretty-print the peer's card before driving
+# the federated workflow run.
+
+id = "vendor-planner"
+name = "Acme Vendor Planner"
+description = "Stub remote A2A peer used by the ork demo to exercise ADR-0007 federation."
+host = "127.0.0.1"
+port = 8090

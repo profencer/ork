@@ -1,0 +1,44 @@
+name: deployment-notification
+version: "1.0"
+trigger:
+  type: webhook
+  event: pipeline_completed
+
+steps:
+  - id: gather_deployment_info
+    agent: researcher
+    tools:
+      - github_pipelines
+      - gitlab_pipelines
+      - github_recent_activity
+      - gitlab_recent_activity
+    prompt_template: >
+      A deployment has just completed. Gather the following information:
+      1. Pipeline/workflow run status (success or failure)
+      2. What branch was deployed and the commit SHA
+      3. What changes were included (recent merged PRs/MRs)
+      4. Who triggered the deployment
+      5. Pipeline duration and any notable stages
+
+      Pipeline data is available from the tools. Compile a factual summary.
+    depends_on: []
+
+  - id: compose_notification
+    agent: writer
+    tools: []
+    prompt_template: >
+      Compose a deployment notification for stakeholders based on this data.
+
+      Format:
+      - Lead with deployment status (SUCCESS or FAILURE) in bold
+      - Environment and branch deployed
+      - Summary of changes (2-3 bullet points)
+      - Link to pipeline/workflow run
+      - Who deployed and when
+
+      Keep it concise — this will be sent as a notification.
+
+      Deployment data:
+      {{gather_deployment_info.output}}
+    depends_on:
+      - gather_deployment_info

@@ -1,0 +1,68 @@
+== Stage 4 — Multi-step workflow run ==
+
+[info] yq/PyYAML unavailable — using bundled JSON snapshot /…/demo/workflows/change-plan.json
+[info] compiled /…/workflow-templates/change-plan.yaml to JSON (~2900 bytes)
+[info] POST http://127.0.0.1:8080/api/workflows
+[info] created workflow id=019dc178-3bf6-7241-a15e-90501b6e4cd5
+[info] POST http://127.0.0.1:8080/api/workflows/019dc178…/runs
+[info] input.task = "Add an opt-in client-side request rate limiter to the Anthropic TypeScript SDK: extend the client constructor with a `requestsPerMinute` option, queue or reject requests that would exceed the budget, and document the new option in the README."
+[info] started run id=019dc178-3c1f-7990-b16f-c8a08900b1bd  (status=pending)
+[info] workflow defines 5 step(s); polling /api/runs/019dc178… until terminal
+[info] run 019dc178… -> running    [select_repos:running]
+[info] run 019dc178… -> running    [select_repos:completed  research_repos:running]
+[info] run 019dc178… -> running    [select_repos:completed  research_repos:completed  synthesize:running]
+[info] run 019dc178… -> running    [select_repos:completed  research_repos:completed  synthesize:completed  write_plan:running]
+[info] run 019dc178… -> running    [select_repos:completed  research_repos:completed  synthesize:completed  write_plan:completed  review:running]
+[info] run 019dc178… -> completed  [select_repos:completed  research_repos:completed  synthesize:completed  write_plan:completed  review:completed]
+
+[info] final run status: completed
+
+[info] step summary:
+  select_repos    status=completed  agent=planner
+  research_repos  status=completed  agent=researcher
+  synthesize      status=completed  agent=synthesizer
+  write_plan      status=completed  agent=writer
+  review          status=completed  agent=reviewer
+
+[info] markdown produced by step `write_plan`:
+# Change plan — client-side request rate limiter for the Anthropic TypeScript SDK
+
+## Overview
+Add an opt-in `requestsPerMinute` option to the `Anthropic` client constructor.
+When set, every outgoing request goes through a token-bucket gate before the
+underlying `fetch` is called; requests that exceed the budget are either
+queued (default) or rejected with `RateLimitExceededError`.
+
+## Per-repository changes
+### anthropic-sdk-typescript
+- `src/client.ts` — extend `ClientOptions` with `requestsPerMinute?: number`
+  and `rateLimitMode?: 'queue' | 'reject'`.
+- `src/internal/rate-limiter.ts` (new) — token-bucket implementation.
+- `src/core.ts` — wrap the request pipeline so the limiter runs before `fetch`.
+- `README.md` — document the new options under "Client options".
+- `tests/rate-limiter.test.ts` (new) — unit tests covering queue + reject modes.
+
+## Cross-cutting concerns
+- The limiter must be a no-op when `requestsPerMinute` is unset to preserve
+  backward compatibility.
+- Streaming requests (`messages.stream`) count as a single budgeted call.
+
+## Suggested ordering
+1. Land `internal/rate-limiter.ts` + unit tests in isolation.
+2. Wire the limiter into `core.ts`'s request pipeline behind the new option.
+3. Surface the option in `ClientOptions` and the README.
+
+## Risks and open questions
+- Queue mode interacts with the SDK's existing retry policy; need to decide
+  whether retries count against the rate budget.
+- No clean place to surface budget metrics — possibly out of scope.
+
+[info] reviewer verdict:
+VERDICT: PASS
+The plan addresses the task and references the configured repository
+(anthropic-sdk-typescript). No internal contradictions; suggest
+clarifying retry interaction in the open questions.
+
+== Stage 4 done ==
+
+[info] next: make -C demo demo-stage-5

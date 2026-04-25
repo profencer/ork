@@ -1,0 +1,105 @@
+name: change-plan
+version: "1.0"
+trigger:
+  type: manual
+
+steps:
+  - id: select_repos
+    agent: planner
+    tools:
+      - list_repos
+    prompt_template: >
+      Task: {{input.task}}
+
+      Use the list_repos tool output. Pick repositories that are relevant to this task.
+      Respond with ONLY valid JSON (no markdown fences) in this shape:
+      {"repos":[{"name":"<repo_name>","reason":"<short reason>"}],"query":"<ripgrep search phrase>"}
+      The "query" should be a concise search string for code_search (keywords, symbol names, or API fragments).
+    depends_on: []
+
+  - id: research_repos
+    agent: researcher
+    tools:
+      - code_search
+      - read_file
+      - list_tree
+    for_each: "{{select_repos.output.repos}}"
+    iteration_var: repo
+    prompt_template: >
+      Task: {{input.task}}
+
+      Repository: {{repo.name}}
+
+      Search query for this repo: "{{select_repos.output.query}}"
+      Run code_search with query "{{select_repos.output.query}}", then read_file on the top hit if useful,
+      and optionally list_tree with prefix "" for orientation.
+
+      Respond with ONLY valid JSON (no markdown fences):
+      {"repository":"{{repo.name}}","impacted_files":[],"proposed_changes":[],"risks":[],"open_questions":[]}
+    depends_on:
+      - select_repos
+
+  - id: synthesize
+    agent: synthesizer
+    tools: []
+    prompt_template: >
+      Task: {{input.task}}
+
+      Consolidate these per-repository findings into one cross-repo change plan.
+      Identify ordering, shared contracts (APIs, schemas, events), dependencies, and risks.
+
+      Per-repo research (JSON array of strings from the researcher):
+      {{research_repos.output}}
+
+      Respond with ONLY valid JSON (no markdown fences) suitable for turning into markdown:
+      a single object with keys overview, per_repo (array of {name, summary, files, changes}),
+      cross_cutting, ordering (array of steps), risks.
+    depends_on:
+      - research_repos
+
+  - id: write_plan
+    agent: writer
+    tools: []
+    prompt_template: >
+      Turn the following structured plan into a clear markdown document with sections:
+      Overview, Per-repository changes, Cross-cutting concerns, Suggested ordering, Risks and open questions.
+
+      Plan (JSON or text from synthesizer):
+      {{synthesize.output}}
+    depends_on:
+      - synthesize
+
+  - id: review
+    agent: reviewer
+    tools: []
+    prompt_template: >
+      Verify the markdown plan addresses the task "{{input.task}}" and reflects the repositories
+      from the selection step. Check for gaps or internal contradictions.
+
+      Plan:
+      {{write_plan.output}}
+
+      Start with "VERDICT: PASS" or "VERDICT: FAIL" and give specific feedback.
+    # Per ADR 0006 (peer delegation), once the reviewer has its verdict we hand
+    # the plan + verdict to the synthesizer for one final consolidation pass via
+    # the `delegate_to:` workflow step. `await: true` blocks this step on the
+    # child task; the child's reply is exposed at `{{review.delegated.output}}`
+    # for downstream steps.
+    delegate_to:
+      agent: synthesizer
+      await: true
+      timeout: 60s
+      prompt_template: >
+        Reviewer verdict and feedback:
+        {{this.output}}
+
+        Original plan:
+        {{write_plan.output}}
+
+        Produce a one-paragraph executive summary that incorporates the reviewer's
+        feedback, suitable for pasting at the top of the markdown plan.
+    depends_on:
+      - write_plan
+    condition:
+      on_pass: complete
+      on_fail: synthesize

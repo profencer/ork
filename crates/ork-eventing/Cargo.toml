@@ -1,0 +1,24 @@
+[package]
+name = "ork-eventing"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+rskafka = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+url = { workspace = true }

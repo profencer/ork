@@ -1,0 +1,29 @@
+# Stub vendor A2A peer for the ork demo (stage 6).
+#
+# Lives outside the main workspace (see `exclude` in the root Cargo.toml) so
+# nothing in this directory affects normal `cargo build` / `cargo test` for
+# the rest of ork. Treat it as an axum mini-app that pretends to be a
+# remote planner agent, just enough to make ADR-0007 federation fire end-to-
+# end without standing up a second copy of ork.
+
+[package]
+name = "demo-peer-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Reuse ork's wire types so the peer's card and JSON-RPC envelope are
+# guaranteed to round-trip with the real client (no hand-typed JSON drift).
+ork-a2a = { path = "../../crates/ork-a2a" }
+
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"

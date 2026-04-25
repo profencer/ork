@@ -1,0 +1,40 @@
+# Federation demo workflow (ADR 0007).
+#
+# Both steps target the `vendor-planner` remote agent so the demo can run
+# without a live LLM key on the host — every "thinking" hop is satisfied by
+# the stub peer in `demo/peer-agent`. The peer's `id` is the same
+# `vendor-planner` we register in `demo/config/default.toml` under
+# `[[remote_agents]]`, so the engine resolves it through `AgentRegistry`
+# like any local agent.
+#
+# Notes:
+#   - We do NOT use `delegate_to:` here. The current engine writes a child
+#     `a2a_tasks` row whose `parent_task_id` FKs the parent step's task,
+#     which only exists for local agent steps. Cross-agent delegation from
+#     a remote-agent step is exercised in stage 4 (change-plan.yaml).
+#   - The peer implements both `message/send` and `message/stream`. The
+#     workflow engine always uses streaming, so we rely on the peer's
+#     SSE response to actually carry the stub reply text.
+
+name: federation-demo
+version: "1.0"
+trigger:
+  type: manual
+
+steps:
+  - id: ask_vendor
+    agent: vendor-planner
+    tools: []
+    prompt_template: >
+      Task: {{input.task}}
+
+      Please ack and outline the next step.
+    depends_on: []
+
+  - id: dispatch
+    agent: vendor-planner
+    tools: []
+    prompt_template: >
+      Continue from the previous reply: {{ask_vendor.output}}
+    depends_on:
+      - ask_vendor

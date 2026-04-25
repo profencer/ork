@@ -1,0 +1,36 @@
+{
+  "name": "ork-demo",
+  "description": "Demo agent for golden JSON test",
+  "version": "0.1.0",
+  "url": "https://example.com/agents/demo",
+  "provider": {
+    "organization": "ork",
+    "url": "https://example.com"
+  },
+  "capabilities": {
+    "streaming": true,
+    "push_notifications": true,
+    "state_transition_history": true
+  },
+  "default_input_modes": ["text"],
+  "default_output_modes": ["text", "data"],
+  "skills": [
+    {
+      "id": "plan",
+      "name": "Planning",
+      "description": "Break down goals",
+      "tags": ["planning"],
+      "examples": ["Plan a migration"]
+    },
+    {
+      "id": "code",
+      "name": "Coding",
+      "description": "Write Rust",
+      "tags": ["code"],
+      "examples": ["Add a new crate"]
+    }
+  ],
+  "extensions": [
+    { "uri": "https://ork.example/devportal/v1", "description": "DevPortal" }
+  ]
+}

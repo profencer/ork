@@ -1,0 +1,60 @@
+{
+  "name": "change-plan",
+  "version": "1.0",
+  "trigger": {
+    "type": "manual"
+  },
+  "steps": [
+    {
+      "id": "select_repos",
+      "agent": "planner",
+      "tools": [
+        "list_repos"
+      ],
+      "prompt_template": "Task: {{input.task}}\nUse the list_repos tool output. Pick repositories that are relevant to this task. Respond with ONLY valid JSON (no markdown fences) in this shape: {\"repos\":[{\"name\":\"<repo_name>\",\"reason\":\"<short reason>\"}],\"query\":\"<ripgrep search phrase>\"} The \"query\" should be a concise search string for code_search (keywords, symbol names, or API fragments).\n",
+      "depends_on": []
+    },
+    {
+      "id": "research_repos",
+      "agent": "researcher",
+      "tools": [
+        "code_search",
+        "read_file",
+        "list_tree"
+      ],
+      "for_each": "{{select_repos.output.repos}}",
+      "iteration_var": "repo",
+      "prompt_template": "Task: {{input.task}}\nRepository: {{repo.name}}\nSearch query for this repo: \"{{select_repos.output.query}}\" Run code_search with query \"{{select_repos.output.query}}\", then read_file on the top hit if useful, and optionally list_tree with prefix \"\" for orientation.\nRespond with ONLY valid JSON (no markdown fences): {\"repository\":\"{{repo.name}}\",\"impacted_files\":[],\"proposed_changes\":[],\"risks\":[],\"open_questions\":[]}\n",
+      "depends_on": [
+        "select_repos"
+      ]
+    },
+    {
+      "id": "synthesize",
+      "agent": "synthesizer",
+      "tools": [],
+      "prompt_template": "Task: {{input.task}}\nConsolidate these per-repository findings into one cross-repo change plan. Identify ordering, shared contracts (APIs, schemas, events), dependencies, and risks.\nPer-repo research (JSON array of strings from the researcher): {{research_repos.output}}\nRespond with ONLY valid JSON (no markdown fences) suitable for turning into markdown: a single object with keys overview, per_repo (array of {name, summary, files, changes}), cross_cutting, ordering (array of steps), risks.\n",
+      "depends_on": [
+        "research_repos"
+      ]
+    },
+    {
+      "id": "write_plan",
+      "agent": "writer",
+      "tools": [],
+      "prompt_template": "Turn the following structured plan into a clear markdown document with sections: Overview, Per-repository changes, Cross-cutting concerns, Suggested ordering, Risks and open questions.\nPlan (JSON or text from synthesizer): {{synthesize.output}}\n",
+      "depends_on": [
+        "synthesize"
+      ]
+    },
+    {
+      "id": "review",
+      "agent": "reviewer",
+      "tools": [],
+      "prompt_template": "Verify the markdown plan addresses the task \"{{input.task}}\" and reflects the repositories from the selection step. Check for gaps or internal contradictions.\nPlan: {{write_plan.output}}\nStart with \"VERDICT: PASS\" or \"VERDICT: FAIL\" and give specific feedback.\n",
+      "depends_on": [
+        "write_plan"
+      ]
+    }
+  ]
+}
