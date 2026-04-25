@@ -29,7 +29,7 @@ demo-stage-0: ## Stage 0 — Bootstrap (compose, migrations, tenant, JWT, ork-ap
 demo-stage-1: ## Stage 1 — `ork standup` proves CLI + integrations (no LLM needed).
 	@bash $(SCRIPTS)/stage-1-standup.sh
 
-demo-stage-2: ## Stage 2 — Agent cards + `/a2a/agents` registry (ADR 0003 + 0005).
+demo-stage-2: ## Stage 2 — Agent cards, `/a2a/agents`, + ADR-0013 gateway smokes.
 	@bash $(SCRIPTS)/stage-2-cards.sh
 
 demo-stage-3: ## Stage 3 — `message/stream` + SSE replay reconnect (ADR 0008).

@@ -2261,6 +2261,7 @@ dependencies = [
  "ork-common",
  "ork-core",
  "ork-eventing",
+ "ork-gateways",
  "ork-integrations",
  "ork-llm",
  "ork-mcp",
@@ -2375,6 +2376,33 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "ork-gateways"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures",
+ "hex",
+ "hmac",
+ "http-body-util",
+ "ork-a2a",
+ "ork-common",
+ "ork-core",
+ "ork-eventing",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]

@@ -42,6 +42,27 @@ pub struct AppConfig {
     /// deployments keep booting without an MCP server in sight.
     #[serde(default)]
     pub mcp: McpAppConfig,
+    /// Generic ingress gateways (ADR-0013). Empty by default.
+    #[serde(default)]
+    pub gateways: Vec<GatewayConfig>,
+}
+
+/// One `[[gateways]]` static entry (ADR-0013). Adapter-specific options live in `config` JSON.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GatewayConfig {
+    pub id: String,
+    /// Adapter id: `rest`, `webhook`, `event_mesh`, `mcp`, or a plugin-registered name.
+    #[serde(rename = "type")]
+    pub gateway_type: String,
+    #[serde(default = "default_gateway_enabled")]
+    pub enabled: bool,
+    /// Per-adapter configuration (TOML table → JSON for factories).
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+fn default_gateway_enabled() -> bool {
+    true
 }
 
 fn default_env() -> String {
@@ -317,6 +338,7 @@ impl Default for AppConfig {
             env: default_env(),
             push: PushConfig::default(),
             mcp: McpAppConfig::default(),
+            gateways: Vec::new(),
         }
     }
 }
@@ -800,6 +822,48 @@ mod tests {
     #[test]
     fn env_defaults_to_dev() {
         assert_eq!(AppConfig::default().env, "dev");
+    }
+
+    #[test]
+    fn gateways_default_empty() {
+        assert!(AppConfig::default().gateways.is_empty());
+    }
+
+    #[test]
+    fn gateways_section_parses_rest_entry() {
+        let toml_src = r#"
+            [[gateways]]
+            id = "rest-local"
+            type = "rest"
+            enabled = true
+            [gateways.config]
+            default_agent = "planner"
+            tenant_id = "00000000-0000-0000-0000-000000000000"
+        "#;
+        let parsed: GatewaysOnly = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.gateways.len(), 1);
+        let g = &parsed.gateways[0];
+        assert_eq!(g.id, "rest-local");
+        assert_eq!(g.gateway_type, "rest");
+        assert!(g.enabled);
+        assert_eq!(g.config["default_agent"], "planner");
+    }
+
+    #[test]
+    fn gateway_enabled_defaults_true_when_omitted() {
+        let toml_src = r#"
+            [[gateways]]
+            id = "x"
+            type = "mcp"
+        "#;
+        let parsed: GatewaysOnly = toml::from_str(toml_src).expect("parse");
+        assert!(parsed.gateways[0].enabled);
+    }
+
+    #[derive(Deserialize)]
+    struct GatewaysOnly {
+        #[serde(default)]
+        gateways: Vec<GatewayConfig>,
     }
 
     #[derive(Deserialize)]

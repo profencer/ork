@@ -1,14 +1,16 @@
 # ork kitchen-sink demo
 
 A self-contained, ~15-minute walk-through that boots the entire ork stack on
-a laptop and exercises every wired ADR (0001-0010) end-to-end. Designed for a
+a laptop and exercises every wired ADR in the default demo path (0001-0010 and
+[0013](../docs/adrs/0013-generic-gateway-abstraction.md) gateway smoke tests in
+stage 2) end-to-end. Designed for a
 mixed audience: engineers can read the JSON in the terminal, stakeholders can
 follow this README and watch the same output scroll past in their pair's
 window.
 
 The whole thing lives under `demo/` plus three tiny shims (root `Makefile`,
 two new isolated cargo binaries under `demo/peer-agent/` and
-`demo/webhook-receiver/`). Nothing under `crates/` had to change.
+`demo/webhook-receiver/`).
 
 ## TL;DR
 
@@ -70,12 +72,20 @@ flowchart LR
   orkApi -->|stdio child| mcp[npx server-everything]
   orkApi -->|JSON-RPC + SSE| peer
   orkApi -->|signed POST| receiver
+  user -->|POST /api/gateways/*| orkApi
 ```
 
 In-memory eventing is used (`[kafka].brokers = []` in
 `demo/config/default.toml`), so no Kafka is needed in compose. The MCP
 servers are spawned as stdio children of `ork-api`, so no extra container
 either.
+
+[ADR-0013](../docs/adrs/0013-generic-gateway-abstraction.md) **generic gateways**
+are enabled in `demo/config/default.toml` (`[[gateways]]` for `demo-rest` and
+`demo-webhook`). They mount as **public** Axum routes; pass `X-Tenant-Id` with
+`TENANT_ID` from `demo/.env` (stage 2 exercises this). Event-mesh and MCP-style
+`ork-gateways` ingress are documented in the ADR; the demo in-memory eventing
+setup does not include a Kafka `event_mesh` example.
 
 ## The 8-stage walkthrough
 
@@ -131,19 +141,30 @@ ADR cross-links: [`0002-cli-architecture.md`](../docs/adrs/0002-cli-architecture
 (CLI surface), and the GitHub adapter under
 [`crates/ork-integrations/src/github`](../crates/ork-integrations/src/github).
 
-### Stage 2 — Agent cards + registry (ADR 0003 + 0005)
+### Stage 2 — Agent cards + registry + gateway smoke (ADR 0003 + 0005 + 0013)
 
 What it does: `curl`s
 
 - `GET /.well-known/agent-card.json` (public, default agent = planner),
 - `GET /a2a/agents/{id}/.well-known/agent-card.json` for each built-in role,
-- `GET /a2a/agents` (protected — needs the JWT).
+- `GET /a2a/agents` (protected — needs the JWT), then
+- **ADR-0013:** `POST /api/gateways/rest/demo-rest` **without** `X-Tenant-Id` (expects **401**),
+- optional: same URL **with** `X-Tenant-Id: $TENANT_ID` and a one-line user message
+  (expects **200** and a JSON body) when `MINIMAX_API_KEY` is set in the
+  environment,
+- `POST /api/gateways/webhook/demo-webhook` with `X-Tenant-Id` and a small JSON
+  body (expects **202**; agent work is scheduled in the background).
 
 ```bash
 make -C demo demo-stage-2
 ```
 
-Expected (excerpt):
+The gateway routes are defined under `[[gateways]]` in
+[`demo/config/default.toml`](config/default.toml). See
+[`0013`](../docs/adrs/0013-generic-gateway-abstraction.md) for the full
+adapter set (`event_mesh`, `mcp`, etc.).
+
+Expected (excerpt for the A2A listing — full golden file includes gateway lines):
 
 ```
 [
@@ -155,8 +176,11 @@ Expected (excerpt):
 ]
 ```
 
+Full transcript: [`demo/expected/stage-2.txt`](expected/stage-2.txt).
+
 ADR cross-links: [`0003-a2a-wire-types.md`](../docs/adrs/0003-a2a-wire-types.md),
-[`0005-card-publishing-and-discovery.md`](../docs/adrs/0005-card-publishing-and-discovery.md).
+[`0005-card-publishing-and-discovery.md`](../docs/adrs/0005-card-publishing-and-discovery.md),
+[`0013`](../docs/adrs/0013-generic-gateway-abstraction.md) (gateways on `/api/gateways/...`).
 The five default cards come from
 [`crates/ork-agents/src/roles.rs`](../crates/ork-agents/src/roles.rs).
 

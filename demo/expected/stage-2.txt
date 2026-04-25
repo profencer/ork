@@ -1,4 +1,4 @@
-== Stage 2 — A2A cards and registry (ADR 0003 + 0005) ==
+== Stage 2 — A2A cards, registry, and gateways (ADR 0003 + 0005 + 0013) ==
 
 [info] GET http://127.0.0.1:8080/.well-known/agent-card.json (public, no auth)
 {
@@ -32,6 +32,12 @@
   { "name": "Reviewer",     "version": "0.1.0", "streaming": true, "push": true, "skills": 2 },
   { "name": "Synthesizer",  "version": "0.1.0", "streaming": true, "push": true, "skills": 1 }
 ]
+
+[info] ADR-0013: REST gateway (demo-rest) without X-Tenant-Id → 401
+[info]   -> HTTP 401 (expected 401)
+[info] ADR-0013: skipping REST 200/LLM round-trip (set MINIMAX_API_KEY to exercise)
+[info] ADR-0013: Webhook gateway (demo-webhook) fire-and-forget → 202
+[info]   -> HTTP 202 (body accepted; agent work runs in background)
 
 == Stage 2 done ==
 

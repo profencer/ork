@@ -496,17 +496,33 @@ async fn main() -> anyhow::Result<()> {
         jwks_provider,
     };
 
-    let app = routes::create_router(app_state);
+    let gateway_boot =
+        ork_api::gateways::build_and_start_gateways(&app_state, discovery_cancel.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .context("configure generic gateways (ADR-0013)")?;
+
+    let app = routes::create_router_with_gateways(app_state, gateway_boot.router);
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!(addr = %addr, "ork server starting");
     axum::serve(listener, app).await?;
 
-    info!("server stopped; cancelling discovery tasks (publishers will flush `died` tombstones)");
+    // Cancel shared discovery/background work first (agent + gateway card publishers, event-mesh
+    // consumer `child_token` chains, etc.).
+    info!(
+        "server stopped; cancelling discovery and gateway background tasks (publishers will flush `died` tombstones)"
+    );
     discovery_cancel.cancel();
     // Give publishers ~one publish cycle to emit their tombstones before exit.
     tokio::time::sleep(discovery_interval.min(Duration::from_secs(2))).await;
+
+    for g in gateway_boot.gateways {
+        if let Err(e) = g.shutdown().await {
+            tracing::warn!(error = %e, gateway_id = %g.id(), "gateway shutdown");
+        }
+    }
 
     Ok(())
 }

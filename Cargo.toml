@@ -8,6 +8,7 @@ members = [
     "crates/ork-agents",
     "crates/ork-cache",
     "crates/ork-eventing",
+    "crates/ork-gateways",
     "crates/ork-integrations",
     "crates/ork-llm",
     "crates/ork-mcp",
@@ -35,6 +36,7 @@ ork-core = { path = "crates/ork-core" }
 ork-agents = { path = "crates/ork-agents" }
 ork-cache = { path = "crates/ork-cache" }
 ork-eventing = { path = "crates/ork-eventing" }
+ork-gateways = { path = "crates/ork-gateways" }
 ork-integrations = { path = "crates/ork-integrations" }
 ork-llm = { path = "crates/ork-llm" }
 ork-mcp = { path = "crates/ork-mcp" }
@@ -126,6 +128,9 @@ rmcp = { version = "0.16", default-features = false, features = [
 aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+subtle = "2.5"
 rand = "0.8"
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "jwk", "pem", "std"] }
 

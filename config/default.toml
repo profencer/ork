@@ -153,3 +153,41 @@ default_branch = "main"
 # type = "stdio"
 # command = "mcp-fs"
 # args = ["--root", "/tenants/files"]
+
+# Generic gateways (ADR-0013). Built-ins: rest, webhook, event_mesh, mcp.
+# Use `[[gateways]]` with `type` and a nested `[gateways.config]` table (JSON-compatible).
+#
+# [[gateways]]
+# id = "rest-local"
+# type = "rest"
+# enabled = true
+# [gateways.config]
+# default_agent = "planner"
+# tenant_id = "00000000-0000-0000-0000-000000000000"
+#
+# [[gateways]]
+# id = "hook-ci"
+# type = "webhook"
+# [gateways.config]
+# mode = "agent"
+# default_agent = "planner"
+# tenant_id = "00000000-0000-0000-0000-000000000000"
+# secret_env = "ORK_GATEWAY_WEBHOOK_SECRET"
+# signature_header = "X-Ork-Signature"
+# allow_unsigned = false
+#
+# [[gateways]]
+# id = "mesh-in"
+# type = "event_mesh"
+# [gateways.config]
+# default_agent = "planner"
+# tenant_id = "00000000-0000-0000-0000-000000000000"
+# topics = ["ingest.example"]
+# outbound_topic = "outbound.example"
+# payload_mode = "json_data"
+#
+# [[gateways]]
+# id = "mcp-tools"
+# type = "mcp"
+# [gateways.config]
+# tenant_id = "00000000-0000-0000-0000-000000000000"

@@ -111,7 +111,7 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0010](0010-mcp-tool-plane.md) | MCP as the canonical external tool plane | Accepted | 3 |
 | [0011](0011-native-llm-tool-calling.md) | Native LLM tool-calling | Accepted | 3 |
 | [0012](0012-multi-llm-providers.md) | OpenAI-compatible LLM provider catalog | Accepted | 3 |
-| [0013](0013-generic-gateway-abstraction.md) | Generic Gateway abstraction | Proposed | 3 |
+| [0013](0013-generic-gateway-abstraction.md) | Generic Gateway abstraction | Implemented | 3 |
 | [0014](0014-plugin-system.md) | Plugin system | Proposed | 3 |
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Proposed | 3 |
 | [0016](0016-artifact-storage.md) | Artifact / file-management service | Proposed | 3 |

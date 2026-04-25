@@ -132,3 +132,27 @@ id = "local-fs"
 type = "stdio"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "./demo/sandbox"]
+
+# ---------------------------------------------------------------------------
+# ADR-0013 — Generic Gateway (no tenant_id here: use `X-Tenant-Id: <UUID>`
+# with the value from `demo/.env` after stage 0; both routes are public in
+# Axum and enforce identity at the adapter).
+# ---------------------------------------------------------------------------
+
+[[gateways]]
+id = "demo-rest"
+type = "rest"
+enabled = true
+[gateways.config]
+default_agent = "planner"
+# No tenant_id: callers must send `X-Tenant-Id` (the demo sets TENANT_ID in .env).
+
+[[gateways]]
+id = "demo-webhook"
+type = "webhook"
+enabled = true
+[gateways.config]
+default_agent = "planner"
+mode = "agent"
+allow_unsigned = true
+# No secret: demo only. Production should set secret_env + HMAC.

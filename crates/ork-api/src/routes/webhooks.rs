@@ -1,6 +1,6 @@
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
 use serde::Deserialize;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::state::AppState;
 
@@ -38,56 +38,19 @@ async fn pipeline_webhook(
         "received pipeline webhook"
     );
 
-    if let Some(slug) = &webhook.tenant_slug {
-        let tenant = state.tenant_service.list_tenants().await;
-        if let Ok(tenants) = tenant
-            && let Some(tenant) = tenants.iter().find(|t| &t.slug == slug)
-        {
-            let defs = state.workflow_service.list_definitions(tenant.id).await;
-
-            if let Ok(definitions) = defs {
-                for def in definitions {
-                    if let ork_core::models::workflow::WorkflowTrigger::Webhook { event } =
-                        &def.trigger
-                        && (event == &webhook.event || event == "pipeline_completed")
-                    {
-                        match state
-                            .workflow_service
-                            .start_run(tenant.id, def.id, webhook.payload.clone())
-                            .await
-                        {
-                            Ok(run) => {
-                                let engine = state.engine.clone();
-                                let wf = state.workflow_service.clone();
-                                let tid = tenant.id;
-                                let run_exec = run.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = wf.run_workflow(engine, tid, run_exec).await {
-                                        error!(
-                                            run_id = %run.id,
-                                            error = %e,
-                                            "workflow execution failed"
-                                        );
-                                    }
-                                });
-                                info!(
-                                    workflow = %def.name,
-                                    tenant = %tenant.slug,
-                                    run_id = %run.id,
-                                    "triggered workflow from webhook"
-                                );
-                            }
-                            Err(e) => error!(
-                                workflow = %def.name,
-                                error = %e,
-                                "webhook workflow start_run failed"
-                            ),
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let body = ork_gateways::webhook::PipelineShape {
+        provider: webhook.provider,
+        event: webhook.event,
+        tenant_slug: webhook.tenant_slug,
+        payload: webhook.payload,
+    };
+    ork_gateways::webhook::run_pipeline_webhook(
+        state.tenant_service.as_ref(),
+        state.workflow_service.clone(),
+        state.engine.clone(),
+        &body,
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,

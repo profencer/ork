@@ -1,6 +1,6 @@
 # 0013 — Generic Gateway abstraction
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-04-24
 - **Phase:** 3
 - **Relates to:** 0002, 0003, 0004, 0008, 0014, 0015, 0017, 0021
@@ -197,6 +197,12 @@ Gateways use the embed resolver (ADR [`0015`](0015-dynamic-embeds.md)) to substi
 
 - Do we want to support a single ork-api process running 50+ gateways, or do gateways scale by separate processes? Decision: support both; gateways are independent enough to scale separately when needed.
 - Per-gateway tenant scoping — Slack workspace ↔ tenant mapping. Decision: declared in gateway config; `GatewayAuthResolver` is the extension point.
+
+## Reviewer findings (code-reviewer, implementation pass)
+
+- **Shutdown (addressed):** `discovery_cancel` and tombstone sleep now run before per-gateway `shutdown()` in `ork-api` so shared tokens stop background work before adapter hooks. Server error paths that skip cleanup remain an operational caveat.
+- **Pipeline `202` (acknowledged + logging):** Legacy and gateway `workflow_trigger` modes intentionally return `202 Accepted` as fire-and-forget; `run_pipeline_webhook` now `warn!`s on `list_tenants` / tenant match / `list_definitions` failures so operators see silent no-ops in logs. Changing HTTP status would be a follow-up / separate ADR.
+- **Gateway discovery after `start` (addressed):** `GatewayDiscoveryPublisher` tasks are spawned only after a successful `Gateway::start`.
 
 ## References
 
