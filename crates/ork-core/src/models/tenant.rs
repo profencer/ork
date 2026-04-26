@@ -49,6 +49,10 @@ pub struct TenantSettings {
     /// step/agent/request-level model overrides per ADR 0012 §`Selection`.
     #[serde(default)]
     pub default_model: Option<String>,
+    /// ADR-0016: optional per-tenant override for artifact retention (days).
+    /// `None` = use operator `[retention]` defaults in the sweep worker.
+    #[serde(default)]
+    pub artifact_retention_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +85,10 @@ pub struct UpdateTenantSettingsRequest {
     /// [`Self::default_provider`].
     #[serde(default)]
     pub default_model: Option<String>,
+    /// ADR-0016. `None` = leave existing setting; `Some(0)` can mean
+    /// "clear override" at the API layer if we add explicit semantics later.
+    #[serde(default)]
+    pub artifact_retention_days: Option<u32>,
 }
 
 #[cfg(test)]
@@ -106,6 +114,7 @@ mod tests {
         assert!(parsed.llm_providers.is_empty());
         assert!(parsed.default_provider.is_none());
         assert!(parsed.default_model.is_none());
+        assert!(parsed.artifact_retention_days.is_none());
     }
 
     #[test]
@@ -127,6 +136,7 @@ mod tests {
             llm_providers: Vec::new(),
             default_provider: None,
             default_model: None,
+            artifact_retention_days: None,
         };
         let json = serde_json::to_value(&original).unwrap();
         let back: TenantSettings = serde_json::from_value(json).unwrap();

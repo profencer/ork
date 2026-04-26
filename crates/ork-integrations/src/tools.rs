@@ -12,6 +12,7 @@ use ork_core::ports::llm::ToolDescriptor;
 use ork_core::workflow::engine::ToolExecutor;
 
 use crate::agent_call::AgentCallToolExecutor;
+use crate::artifact_tools::{self, ArtifactToolExecutor};
 use crate::code_tools::CodeToolExecutor;
 
 /// Registry of tools available to agents, backed by integration adapters.
@@ -80,7 +81,7 @@ impl IntegrationToolExecutor {
                 description: "Fetch GitLab pipeline information for a repository.".into(),
                 parameters: repo_window,
             }),
-            _ => None,
+            _ => artifact_tools::integration_descriptor(name),
         }
     }
 }
@@ -239,6 +240,8 @@ pub struct CompositeToolExecutor {
     /// stays unaware of the concrete `ork_mcp::McpClient` (and therefore
     /// of the rmcp dep). Tests can substitute any `ToolExecutor` impl.
     mcp: Option<Arc<dyn ToolExecutor>>,
+    /// ADR-0016: optional [`ArtifactToolExecutor`]; if unset, artifact tools error at runtime.
+    artifacts: Option<Arc<ArtifactToolExecutor>>,
 }
 
 impl CompositeToolExecutor {
@@ -248,6 +251,7 @@ impl CompositeToolExecutor {
             code,
             agent_call: None,
             mcp: None,
+            artifacts: None,
         }
     }
 
@@ -274,6 +278,14 @@ impl CompositeToolExecutor {
     #[must_use]
     pub fn with_mcp(mut self, exec: Arc<dyn ToolExecutor>) -> Self {
         self.mcp = Some(exec);
+        self
+    }
+
+    /// ADR-0016: attach the artifact tool executor; when `None`, artifact tools
+    /// return a clear `Integration` error.
+    #[must_use]
+    pub fn with_artifacts(mut self, exec: Option<Arc<ArtifactToolExecutor>>) -> Self {
+        self.artifacts = exec;
         self
     }
 }
@@ -306,6 +318,16 @@ impl ToolExecutor for CompositeToolExecutor {
                 )
             })?;
             return agent_call.execute(ctx, tool_name, input).await;
+        }
+
+        if artifact_tools::is_artifact_tool(tool_name) {
+            let exec = self.artifacts.as_ref().ok_or_else(|| {
+                OrkError::Integration(
+                    "artifact tools not configured (ADR-0016: provision ArtifactStore in process)"
+                        .into(),
+                )
+            })?;
+            return exec.execute(ctx, tool_name, input).await;
         }
 
         // ADR-0006 §`LLM tool surface`. The catalog advertises one descriptor
@@ -399,6 +421,8 @@ mod tests {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store: None,
+            artifact_public_base: None,
         }
     }
 

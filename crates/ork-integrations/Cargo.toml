@@ -8,6 +8,7 @@ ork-a2a = { workspace = true }
 ork-cache = { workspace = true }
 ork-common = { workspace = true }
 ork-core = { workspace = true }
+ork-storage = { workspace = true }
 octocrab = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -19,7 +20,10 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+uuid = { workspace = true }
 url = { workspace = true }
+urlencoding = { workspace = true }
+base64 = { workspace = true }
 futures = { workspace = true }
 bytes = { workspace = true }
 eventsource-stream = { workspace = true }
@@ -28,6 +32,7 @@ backon = { workspace = true }
 async-stream = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 wiremock = { workspace = true }
 uuid = { workspace = true }
 tokio-util = { workspace = true }

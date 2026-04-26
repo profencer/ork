@@ -1,9 +1,9 @@
 # ork kitchen-sink demo
 
 A self-contained, ~15-minute walk-through that boots the entire ork stack on
-a laptop and exercises every wired ADR in the default demo path (0001-0010 and
-[0013](../docs/adrs/0013-generic-gateway-abstraction.md) gateway smoke tests in
-stage 2) end-to-end. Designed for a
+a laptop and exercises every wired ADR in the default demo path (0001-0010,
+[0013](../docs/adrs/0013-generic-gateway-abstraction.md) gateways, and
+[0016](../docs/adrs/0016-artifact-storage.md) artifact tools in stage 4a) end-to-end. Designed for a
 mixed audience: engineers can read the JSON in the terminal, stakeholders can
 follow this README and watch the same output scroll past in their pair's
 window.
@@ -16,7 +16,7 @@ two new isolated cargo binaries under `demo/peer-agent/` and
 
 ```bash
 # from the repo root
-export MINIMAX_API_KEY="Bearer sk-..."   # literal Authorization header value, only needed for stage 4
+export MINIMAX_API_KEY="Bearer sk-..."   # literal Authorization header value; needed for stages 4 and 4a
 export GITHUB_TOKEN=...                  # only needed for stage 1
 make demo                                # everything: stage 0 -> stage 8
 ```
@@ -42,7 +42,7 @@ make demo-down               # stage 8 cleanup
 | `openssl` | mints the demo's HS256 JWT (stage 0) | `openssl version` |
 | `yq` (mikefarah) **or** `python3` + `PyYAML` *(optional)* | YAML → JSON for workflow defs (stages 4 + 6); pre-baked JSON snapshots ship under `demo/workflows/` so the demo runs without either | `yq --version` |
 | Node.js 20+ / `npx` | spawns the MCP `server-everything` child + (stage 5) | `node --version` |
-| `MINIMAX_API_KEY` env var | demo's `default_provider` is `minimax` (see [`demo/config/default.toml`](config/default.toml)) and reads its key from this env var. Per [ADR 0012](../docs/adrs/0012-multi-llm-providers.md), header values are sent verbatim — no implicit `Bearer ` prefix — so this MUST be set to the **literal Authorization header value** (e.g. `export MINIMAX_API_KEY="Bearer sk-…"`). A bare key surfaces as `401 Unauthorized — Please carry the API secret key in the 'Authorization' field` from Minimax. Swap in any OpenAI-compatible endpoint by editing `[[llm.providers]]`. Needed for stage 4. | `echo $MINIMAX_API_KEY` |
+| `MINIMAX_API_KEY` env var | demo's `default_provider` is `minimax` (see [`demo/config/default.toml`](config/default.toml)) and reads its key from this env var. Per [ADR 0012](../docs/adrs/0012-multi-llm-providers.md), header values are sent verbatim — no implicit `Bearer ` prefix — so this MUST be set to the **literal Authorization header value** (e.g. `export MINIMAX_API_KEY="Bearer sk-…"`). A bare key surfaces as `401 Unauthorized — Please carry the API secret key in the 'Authorization' field` from Minimax. Swap in any OpenAI-compatible endpoint by editing `[[llm.providers]]`. Needed for stages 4 and 4a. | `echo $MINIMAX_API_KEY` |
 | `GITHUB_TOKEN` env var | optional; powers `ork standup` against a real repo (stage 1) | `gh auth status` |
 
 The demo uses host ports `8080` (`ork-api`), `8090` (peer), `8091` (push
@@ -87,9 +87,10 @@ are enabled in `demo/config/default.toml` (`[[gateways]]` for `demo-rest` and
 `ork-gateways` ingress are documented in the ADR; the demo in-memory eventing
 setup does not include a Kafka `event_mesh` example.
 
-## The 8-stage walkthrough
+## The walkthrough (stages 0–8, plus 4a)
 
-Each stage is one `make -C demo demo-stage-N` target so it can be paused,
+Each stage is one `make -C demo demo-stage-N` target (and `demo-stage-4a` for the
+artifact tour) so it can be paused,
 replayed, or skipped independently. Golden outputs (header trimmed) live
 under [`demo/expected/`](expected/); the snippets in each section below are
 reproduced from those files.
@@ -266,6 +267,45 @@ the `delegate_to:` semantics see
 [`0006-peer-delegation-model.md`](../docs/adrs/0006-peer-delegation-model.md)
 — but bear in mind it isn't currently runnable end-to-end (next section).
 
+### Stage 4a — Artifact tour workflow ([ADR 0016](../docs/adrs/0016-artifact-storage.md))
+
+What it does:
+
+1. Compiles [`workflow-templates/artifact-tour.yaml`](../workflow-templates/artifact-tour.yaml)
+   (three `writer` steps). A JSON snapshot lives at
+   [`demo/workflows/artifact-tour.json`](workflows/artifact-tour.json) for hosts
+   without `yq`/PyYAML — same pattern as stage 4.
+2. POSTs the definition, starts a run with `input.artifact_name`,
+   `input.seed_line`, `input.append_line`, `input.task`, and
+   `input.embed_variables.artifact_demo_label` (for ADR-0015 `«var:…»` in the
+   first step — Unicode guillemets, not `{{…}}`; see the header comment in
+   [`workflow-templates/artifact-tour.yaml`](../workflow-templates/artifact-tour.yaml)).
+3. Polls until the run is terminal, then prints the text output of `seed_file`,
+   `append_file`, and `inventory`.
+
+**Requires** `[artifacts] enabled` in [`demo/config/default.toml`](config/default.toml)
+(local FS under `data/artifacts` relative to the `demo/` cwd). If you added
+this after an earlier stage-0, restart `ork-api` so the `ArtifactStore` is
+constructed.
+
+What this exercises: `create_artifact` → `append_artifact` (new version) →
+`list_artifacts` / `artifact_meta` / `load_artifact`, all in one workflow run
+(same tenant scope; `context_id` is unset so artifacts use the nil context key).
+
+This stage needs `MINIMAX_API_KEY` (same as stage 4). Without it the script exits 0.
+
+```bash
+export MINIMAX_API_KEY=...
+make -C demo demo-stage-4a
+```
+
+Optional env vars: `ARTIFACT_DEMO_TASK`, `ARTIFACT_DEMO_NAME`, `ARTIFACT_DEMO_SEED`,
+`ARTIFACT_DEMO_APPEND`, `ARTIFACT_DEMO_EMBED_LABEL`, `WORKFLOW_TIMEOUT_SECS` — see
+the header comment in
+[`demo/scripts/stage-4a-artifact-tour.sh`](scripts/stage-4a-artifact-tour.sh).
+
+Expected output shape: [`demo/expected/stage-4a.txt`](expected/stage-4a.txt).
+
 ### Stage 5 — MCP tool plane (ADR 0010)
 
 What it does:
@@ -385,15 +425,15 @@ make demo-down                  # alias for `make -C demo demo-stage-8`
   `PEER_ADDR=127.0.0.1:9090 make -C demo demo-stage-6`. For the docker
   ports, edit `demo/docker-compose.yml` and the matching URLs in
   `demo/config/default.toml`.
-- **`MINIMAX_API_KEY` not set** — stage 4 exits 0 with a hint and stage 7's
-  live push half is skipped. The other six stages still run end-to-end.
+- **`MINIMAX_API_KEY` not set** — stages 4 and 4a exit 0 with a hint and stage 7's
+  live push half is skipped. The other stages still run end-to-end.
 - **`npx` missing** — stage 5's live MCP round-trip is skipped (the boot
   evidence half still runs). Install Node.js 20+ to enable it.
-- **`yq` missing** — both YAML-driven stages ship pre-generated JSON
-  snapshots under `demo/workflows/`, so stages 4 and 6 work on a stock
+- **`yq` missing** — YAML-driven workflow stages ship pre-generated JSON
+  snapshots under `demo/workflows/`, so stages 4, 4a, and 6 work on a stock
   macOS box without `yq` or PyYAML. The snapshots are kept in sync with
-  the source YAML by hand; if you edit `workflow-templates/change-plan.yaml`
-  or `demo/workflows/federation-demo.yaml`, regenerate the matching
+  the source YAML by hand; if you edit `workflow-templates/change-plan.yaml`,
+  `workflow-templates/artifact-tour.yaml`, or `demo/workflows/federation-demo.yaml`, regenerate the matching
   `*.json` (`yq -o json '.' file.yaml > file.json` or
   `python3 -c "import json,yaml; json.dump(yaml.safe_load(open('file.yaml')), open('file.json','w'), indent=2)"`).
 - **Stage 7 JWKS shows the old `kid` after rotation** — expected. The
@@ -492,10 +532,11 @@ demo/
 │   ├── default.toml         # overlays the workspace config/default.toml
 │   └── peer.toml            # stub vendor-planner identity
 ├── scripts/
-│   ├── stage-0-bootstrap.sh ... stage-8-teardown.sh
+│   ├── stage-0-bootstrap.sh … stage-8-teardown.sh (includes `stage-4a-artifact-tour.sh`)
 │   └── lib.sh               # shared helpers (mint-jwt, wait-for, etc.)
 ├── workflows/
 │   ├── change-plan.json       # stage 4 fallback snapshot (sync with `workflow-templates/change-plan.yaml`)
+│   ├── artifact-tour.json     # stage 4a fallback snapshot (sync with `workflow-templates/artifact-tour.yaml`)
 │   ├── federation-demo.yaml  # stage 6
 │   └── federation-demo.json  # yq/python fallback for stage 6
 ├── peer-agent/              # stub remote A2A peer (cargo, isolated)

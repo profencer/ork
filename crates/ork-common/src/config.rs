@@ -45,6 +45,13 @@ pub struct AppConfig {
     /// Generic ingress gateways (ADR-0013). Empty by default.
     #[serde(default)]
     pub gateways: Vec<GatewayConfig>,
+    /// ADR-0016: blob storage (FS/S3) + Postgres metadata index. Disabled by
+    /// default so tests and dev shells boot without a writable artifact root.
+    #[serde(default)]
+    pub artifacts: ArtifactsConfig,
+    /// ADR-0016: scheduled artifact retention (Postgres + blob delete).
+    #[serde(default)]
+    pub retention: RetentionConfig,
 }
 
 /// One `[[gateways]]` static entry (ADR-0013). Adapter-specific options live in `config` JSON.
@@ -63,6 +70,109 @@ pub struct GatewayConfig {
 
 fn default_gateway_enabled() -> bool {
     true
+}
+
+/// ADR-0016: operator knobs for the `ArtifactStore` + chained backends.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ArtifactsConfig {
+    /// When `false`, the API does not build an `ArtifactStore` (artifact tools
+    /// and file rewrites are unavailable).
+    #[serde(default = "default_artifacts_enabled")]
+    pub enabled: bool,
+    /// Default backend for unprefixed logical names (currently only `fs` is
+    /// bootstrapped; `s3` is an additional [`Self::s3`] scheme in the chain).
+    #[serde(default = "default_artifact_default_backend")]
+    pub default_backend: String,
+    #[serde(default)]
+    pub fs: ArtifactFsConfig,
+    #[serde(default)]
+    pub s3: Option<ArtifactS3Config>,
+}
+
+fn default_artifacts_enabled() -> bool {
+    false
+}
+fn default_artifact_default_backend() -> String {
+    "fs".into()
+}
+
+impl Default for ArtifactsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_artifacts_enabled(),
+            default_backend: default_artifact_default_backend(),
+            fs: ArtifactFsConfig::default(),
+            s3: None,
+        }
+    }
+}
+
+/// Local filesystem `ArtifactStore` root (ADR-0016).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ArtifactFsConfig {
+    /// Root directory; created at boot if missing when `[artifacts] enabled` is
+    /// true.
+    #[serde(default = "default_artifact_fs_root")]
+    pub root: PathBuf,
+}
+fn default_artifact_fs_root() -> PathBuf {
+    PathBuf::from("./data/artifacts")
+}
+impl Default for ArtifactFsConfig {
+    fn default() -> Self {
+        Self {
+            root: default_artifact_fs_root(),
+        }
+    }
+}
+
+/// S3-compatible `ArtifactStore` (ADR-0016). Wires only when present.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ArtifactS3Config {
+    pub bucket: String,
+    pub region: String,
+    /// Custom endpoint (MinIO, R2, etc.); `force_path_style` is enabled in code.
+    pub endpoint: Option<String>,
+    /// Env var for access key (read at boot, value not stored in config).
+    #[serde(default = "default_s3_key_env")]
+    pub access_key_env: String,
+    #[serde(default = "default_s3_secret_env")]
+    pub secret_key_env: String,
+}
+fn default_s3_key_env() -> String {
+    "AWS_ACCESS_KEY_ID".into()
+}
+fn default_s3_secret_env() -> String {
+    "AWS_SECRET_ACCESS_KEY".into()
+}
+
+/// ADR-0016: `eligible_for_sweep` uses these day counts (see the ADR’s SQL).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RetentionConfig {
+    #[serde(default = "default_retention_default_days")]
+    pub default_days: u32,
+    #[serde(default = "default_retention_task_artifacts_days")]
+    pub task_artifacts_days: u32,
+    #[serde(default = "default_retention_sweep_interval_secs")]
+    pub sweep_interval_secs: u64,
+}
+fn default_retention_default_days() -> u32 {
+    90
+}
+fn default_retention_task_artifacts_days() -> u32 {
+    7
+}
+fn default_retention_sweep_interval_secs() -> u64 {
+    86_400
+}
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            default_days: default_retention_default_days(),
+            task_artifacts_days: default_retention_task_artifacts_days(),
+            sweep_interval_secs: default_retention_sweep_interval_secs(),
+        }
+    }
 }
 
 fn default_env() -> String {
@@ -339,6 +449,8 @@ impl Default for AppConfig {
             push: PushConfig::default(),
             mcp: McpAppConfig::default(),
             gateways: Vec::new(),
+            artifacts: ArtifactsConfig::default(),
+            retention: RetentionConfig::default(),
         }
     }
 }

@@ -10,14 +10,14 @@ DEMO_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 SCRIPTS := $(DEMO_DIR)/scripts
 
 .PHONY: demo-all demo-up demo-down help \
-        demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 \
+        demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 demo-stage-4a \
         demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-8
 
 help: ## Show every demo target with its description.
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
-demo-all: demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-8 ## Run every stage in order, end-to-end.
+demo-all: demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 demo-stage-4a demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-8 ## Run every stage in order, end-to-end.
 
 demo-up: demo-stage-0 ## Boot infra + ork-api so other stages can be run individually.
 
@@ -37,6 +37,9 @@ demo-stage-3: ## Stage 3 — `message/stream` + SSE replay reconnect (ADR 0008).
 
 demo-stage-4: ## Stage 4 — Multi-step workflow run (planner → researcher → synthesizer → writer → reviewer).
 	@bash $(SCRIPTS)/stage-4-workflow.sh
+
+demo-stage-4a: ## Stage 4a — Artifact tour workflow: create_artifact → append → list/meta/load (ADR 0016).
+	@bash $(SCRIPTS)/stage-4a-artifact-tour.sh
 
 demo-stage-5: ## Stage 5 — MCP tool call routed via CompositeToolExecutor (ADR 0010).
 	@bash $(SCRIPTS)/stage-5-mcp.sh

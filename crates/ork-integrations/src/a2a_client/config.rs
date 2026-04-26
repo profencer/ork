@@ -5,10 +5,14 @@
 //! workflow inline-card overlay. Per-call HTTP behaviour (idempotency keys,
 //! tenant header values, …) lives in [`crate::a2a_client::A2aRemoteAgent`].
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use ork_core::ports::artifact_meta_repo::ArtifactMetaRepo;
+use ork_core::ports::artifact_store::ArtifactStore;
+
 /// HTTP+SSE client tuning shared across remote A2A clients in this process.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct A2aClientConfig {
     /// Per-request HTTP timeout (TCP connect + TLS + headers + body). Default 30s.
     pub request_timeout: Duration,
@@ -23,6 +27,33 @@ pub struct A2aClientConfig {
     pub user_agent: String,
     /// Refresh interval for cached `AgentCard`s pulled via `CardFetcher`.
     pub card_refresh_interval: Duration,
+    /// ADR-0016: when all three are set, outbound `message/send` and `message/stream`
+    /// replace `Part::File` base64 with proxy URIs before POST.
+    pub artifact_store: Option<Arc<dyn ArtifactStore>>,
+    pub artifact_meta: Option<Arc<dyn ArtifactMetaRepo>>,
+    /// Public API base, no path (e.g. `https://ork.example`); `None` disables rewrite.
+    pub artifact_public_base: Option<String>,
+}
+
+impl std::fmt::Debug for A2aClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("A2aClientConfig")
+            .field("request_timeout", &self.request_timeout)
+            .field("stream_idle_timeout", &self.stream_idle_timeout)
+            .field("retry", &self.retry)
+            .field("user_agent", &self.user_agent)
+            .field("card_refresh_interval", &self.card_refresh_interval)
+            .field(
+                "artifact_store",
+                &self.artifact_store.as_ref().map(|_| "<set>"),
+            )
+            .field(
+                "artifact_meta",
+                &self.artifact_meta.as_ref().map(|_| "<set>"),
+            )
+            .field("artifact_public_base", &self.artifact_public_base)
+            .finish()
+    }
 }
 
 impl Default for A2aClientConfig {
@@ -33,6 +64,9 @@ impl Default for A2aClientConfig {
             retry: RetryPolicy::default(),
             user_agent: format!("ork/{}", env!("CARGO_PKG_VERSION")),
             card_refresh_interval: Duration::from_secs(60 * 60),
+            artifact_store: None,
+            artifact_meta: None,
+            artifact_public_base: None,
         }
     }
 }

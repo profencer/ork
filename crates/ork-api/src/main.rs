@@ -146,31 +146,6 @@ async fn main() -> anyhow::Result<()> {
             config.kafka.namespace.clone(),
         ));
 
-    // ADR-0007: shared HTTP client + Redis-backed card cache + remote-agent builder.
-    // The same builder is reused by the static loader, the discovery subscriber, and the
-    // workflow inline-card overlay so all three paths produce identically-configured agents.
-    let http_client = reqwest::Client::builder()
-        .user_agent(config.a2a_client.user_agent.clone())
-        .build()
-        .context("failed to build shared reqwest client (ADR-0007)")?;
-    let card_cache = remote_agents::build_card_cache(&config.redis.url).await;
-    let a2a_builder = remote_agents::build_remote_builder(
-        http_client.clone(),
-        card_cache.clone(),
-        &config.a2a_client,
-        Some(delegation_publisher.clone()),
-    );
-    let remote_builder: Arc<dyn RemoteAgentBuilder> = a2a_builder.clone();
-
-    let card_ctx = CardEnrichmentContext {
-        public_base_url: config.discovery.public_base_url.clone(),
-        provider_organization: config.discovery.provider_organization.clone(),
-        devportal_url: config.discovery.devportal_url.clone(),
-        namespace: config.kafka.namespace.clone(),
-        include_tenant_required_ext: config.discovery.include_tenant_required_ext,
-        tenant_header: "X-Tenant-Id".to_string(),
-    };
-
     // ADR-0010: boot the MCP client before the cyclic registry init so we
     // can both (a) attach it to `CompositeToolExecutor` and (b) drive its
     // refresh loop from the same `discovery_cancel` token as every other
@@ -193,6 +168,54 @@ async fn main() -> anyhow::Result<()> {
         info!("ADR-0010: MCP client disabled by config");
     }
 
+    // ADR-0016: blob store, Postgres index, and tool executor; `[artifacts] enabled = false` skips all three.
+    let artifact_public_base = ork_api::artifact_inbound::artifact_public_base_url(&config);
+    let (artifact_store, artifact_meta, artifact_tool_exec) = if config.artifacts.enabled {
+        let store = ork_api::artifacts_boot::build_artifact_store(&config)
+            .await
+            .context("ADR-0016: build ArtifactStore")?;
+        let meta: Arc<dyn ork_core::ports::artifact_meta_repo::ArtifactMetaRepo> = Arc::new(
+            ork_persistence::postgres::artifact_meta_repo::PgArtifactMetaRepo::new(pool.clone()),
+        );
+        let exec = Arc::new(ork_integrations::artifact_tools::ArtifactToolExecutor::new(
+            store.clone(),
+            meta.clone(),
+            Some(artifact_public_base.clone()),
+        ));
+        (Some(store), Some(meta), Some(exec))
+    } else {
+        (None, None, None)
+    };
+
+    // ADR-0007: shared HTTP client + Redis-backed card cache + remote-agent builder.
+    // Built after ADR-0016 artifact wiring so the builder can add outbound `Part::File` rewrites.
+    let http_client = reqwest::Client::builder()
+        .user_agent(config.a2a_client.user_agent.clone())
+        .build()
+        .context("failed to build shared reqwest client (ADR-0007)")?;
+    let card_cache = remote_agents::build_card_cache(&config.redis.url).await;
+    let a2a_artifacts = match (&artifact_store, &artifact_meta) {
+        (Some(s), Some(m)) => Some((s.clone(), m.clone(), artifact_public_base.clone())),
+        _ => None,
+    };
+    let a2a_builder = remote_agents::build_remote_builder(
+        http_client.clone(),
+        card_cache.clone(),
+        &config.a2a_client,
+        Some(delegation_publisher.clone()),
+        a2a_artifacts,
+    );
+    let remote_builder: Arc<dyn RemoteAgentBuilder> = a2a_builder.clone();
+
+    let card_ctx = CardEnrichmentContext {
+        public_base_url: config.discovery.public_base_url.clone(),
+        provider_organization: config.discovery.provider_organization.clone(),
+        devportal_url: config.discovery.devportal_url.clone(),
+        namespace: config.kafka.namespace.clone(),
+        include_tenant_required_ext: config.discovery.include_tenant_required_ext,
+        tenant_header: "X-Tenant-Id".to_string(),
+    };
+
     // ADR 0006 wiring is cyclic: `LocalAgent`s own the composite `ToolExecutor`,
     // which owns the `AgentCallToolExecutor`, which needs to resolve targets through
     // the `AgentRegistry` that owns those same `LocalAgent`s. We resolve it with
@@ -208,7 +231,8 @@ async fn main() -> anyhow::Result<()> {
             integration_executor,
             code_executor,
         )
-        .with_agent_call(agent_call_exec);
+        .with_agent_call(agent_call_exec)
+        .with_artifacts(artifact_tool_exec.clone());
         // ADR-0010: route `mcp:<server>.<tool>` calls through the MCP
         // client. The trait-object cast lines up with
         // `CompositeToolExecutor::with_mcp(Arc<dyn ToolExecutor>)`.
@@ -254,7 +278,13 @@ async fn main() -> anyhow::Result<()> {
             // so the push delivery worker fans out the child terminal-state
             // notification to the parent's chosen URL.
             .with_push_repo(a2a_push_repo.clone())
-            .with_embeds(embed_registry.clone(), embed_limits.clone()),
+            .with_embeds(embed_registry.clone(), embed_limits.clone())
+            .with_artifact_store(artifact_store.clone())
+            .with_artifact_public_base(
+                artifact_store
+                    .as_ref()
+                    .map(|_| artifact_public_base.clone()),
+            ),
     );
 
     remote_agents::load_static_remote_agents(
@@ -455,6 +485,18 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // ADR-0016 §`Retention`: Postgres `eligible_for_sweep` + blob `delete` + `delete_version`.
+    if let (Some(store), Some(meta)) = (artifact_store.clone(), artifact_meta.clone()) {
+        ork_api::artifact_retention::spawn_artifact_retention_sweep(
+            store,
+            meta,
+            config.retention.default_days,
+            config.retention.task_artifacts_days,
+            config.retention.sweep_interval_secs,
+            discovery_cancel.clone(),
+        );
+    }
+
     // ADR-0010 §`Tool discovery`: periodic refresh of the MCP descriptor
     // cache so newly-added server tools surface to the LLM without a
     // restart. The interval is bounded below by 1s so a `0` in config
@@ -500,6 +542,9 @@ async fn main() -> anyhow::Result<()> {
         jwks_provider,
         embed_registry,
         embed_limits,
+        artifact_store: artifact_store.clone(),
+        artifact_meta: artifact_meta.clone(),
+        artifact_public_base: artifact_public_base.clone(),
     };
 
     let gateway_boot =

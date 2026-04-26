@@ -530,6 +530,9 @@ pub async fn test_state_with_agents(agent_ids: &[&str]) -> TestState {
         jwks_provider: jwks_provider.clone(),
         embed_registry,
         embed_limits,
+        artifact_store: None,
+        artifact_meta: None,
+        artifact_public_base: "http://127.0.0.1:0".into(),
     };
 
     TestState {

@@ -136,14 +136,15 @@ mod tests {
     #[tokio::test]
     async fn unknown_type_preserved() {
         let reg = EmbedRegistry::with_builtins();
-        let ctx = EmbedContext {
-            tenant_id: TenantId(Uuid::new_v4()),
-            task_id: None,
-            a2a_repo: None,
-            now: Utc::now(),
-            variables: HashMap::new(),
-            depth: 0,
-        };
+        let ctx = EmbedContext::with_limits(
+            TenantId(Uuid::new_v4()),
+            None,
+            None,
+            None,
+            Utc::now(),
+            HashMap::new(),
+            &EmbedLimits::default(),
+        );
         let s = resolve_early("a «nope:xx» b", &ctx, &reg, &EmbedLimits::default())
             .await
             .unwrap();

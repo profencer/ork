@@ -1,4 +1,5 @@
 pub mod a2a;
+pub mod artifacts;
 pub mod health;
 pub mod jwks;
 pub mod tenants;
@@ -28,6 +29,7 @@ pub fn create_router_with_gateways(state: AppState, gateway_routes: Router) -> R
         .merge(jwks::routes(state.clone()));
 
     let protected_routes = Router::new()
+        .merge(artifacts::routes(state.clone()))
         .merge(tenants::routes(state.clone()))
         .merge(workflows::routes(state.clone()))
         // ADR-0008: A2A JSON-RPC dispatcher, SSE bridge, and convenience

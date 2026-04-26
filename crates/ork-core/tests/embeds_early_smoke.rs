@@ -6,16 +6,19 @@ use ork_core::embeds::{EmbedContext, EmbedLimits, EmbedRegistry, resolve_early};
 use uuid::Uuid;
 
 fn ctx(tenant: TenantId) -> EmbedContext {
-    EmbedContext {
-        tenant_id: tenant,
-        task_id: None,
-        a2a_repo: None,
-        now: Utc.with_ymd_and_hms(2026, 4, 26, 12, 0, 0).unwrap(),
-        variables: [("foo".to_string(), "bar".to_string())]
+    let mut c = EmbedContext::with_limits(
+        tenant,
+        None,
+        None,
+        None,
+        Utc.with_ymd_and_hms(2026, 4, 26, 12, 0, 0).unwrap(),
+        [("foo".to_string(), "bar".to_string())]
             .into_iter()
             .collect(),
-        depth: 0,
-    }
+        &EmbedLimits::default(),
+    );
+    c.depth = 0;
+    c
 }
 
 #[tokio::test]
@@ -59,8 +62,13 @@ async fn max_embeds_cap() {
 async fn unknown_type_passthrough() {
     let reg = EmbedRegistry::with_builtins();
     let t = ctx(TenantId(Uuid::new_v4()));
-    let s = resolve_early("«artifact_meta:foo»", &t, &reg, &EmbedLimits::default())
-        .await
-        .unwrap();
-    assert_eq!(s, "«artifact_meta:foo»");
+    let s = resolve_early(
+        "«not_a_registered_embed_type:foo»",
+        &t,
+        &reg,
+        &EmbedLimits::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(s, "«not_a_registered_embed_type:foo»");
 }

@@ -114,7 +114,7 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0013](0013-generic-gateway-abstraction.md) | Generic Gateway abstraction | Implemented | 3 |
 | [0014](0014-plugin-system.md) | Plugin system | Superseded by [0024](0024-wasm-plugin-system.md) | 3 |
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Implemented | 3 |
-| [0016](0016-artifact-storage.md) | Artifact / file-management service | Proposed | 3 |
+| [0016](0016-artifact-storage.md) | Artifact / file-management service | Accepted | 3 |
 | [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Proposed | 4 |
 | [0018](0018-dag-executor-enhancements.md) | Workflow DAG executor enhancements | Proposed | 4 |
 | [0019](0019-scheduled-tasks.md) | Scheduled tasks | Proposed | 4 |

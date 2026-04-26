@@ -51,6 +51,7 @@ fn cfg() -> A2aClientConfig {
         },
         user_agent: "ork-reference-it/0.0.0".to_string(),
         card_refresh_interval: Duration::from_secs(60),
+        ..Default::default()
     }
 }
 
@@ -74,6 +75,8 @@ fn ctx() -> AgentContext {
         delegation_depth: 0,
         delegation_chain: Vec::new(),
         step_llm_overrides: None,
+        artifact_store: None,
+        artifact_public_base: None,
     }
 }
 

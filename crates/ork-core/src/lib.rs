@@ -1,5 +1,6 @@
 pub mod a2a;
 pub mod agent_registry;
+pub mod artifact_spill;
 pub mod embeds;
 pub mod models;
 pub mod ports;

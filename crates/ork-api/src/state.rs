@@ -5,6 +5,8 @@ use ork_core::agent_registry::AgentRegistry;
 use ork_core::embeds::{EmbedLimits, EmbedRegistry};
 use ork_core::ports::a2a_push_repo::A2aPushConfigRepository;
 use ork_core::ports::a2a_task_repo::A2aTaskRepository;
+use ork_core::ports::artifact_meta_repo::ArtifactMetaRepo;
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::remote_agent_builder::RemoteAgentBuilder;
 use ork_core::services::tenant::TenantService;
 use ork_core::services::workflow::WorkflowService;
@@ -50,4 +52,10 @@ pub struct AppState {
     /// ADR-0015: late-phase `«type:…»` resolution on the A2A SSE stream.
     pub embed_registry: Arc<EmbedRegistry>,
     pub embed_limits: EmbedLimits,
+    /// ADR-0016: optional blob store + index; both set when [`AppConfig::artifacts`]
+    /// is enabled. Used for A2A `Part::File` rewrites, proxy GET, and tool/embed paths.
+    pub artifact_store: Option<Arc<dyn ArtifactStore>>,
+    pub artifact_meta: Option<Arc<dyn ArtifactMetaRepo>>,
+    /// e.g. `https://api.example` — no path; used for public [`FileRef::Uri`].
+    pub artifact_public_base: String,
 }

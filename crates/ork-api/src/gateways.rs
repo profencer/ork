@@ -34,6 +34,11 @@ pub async fn build_and_start_gateways(
             ),
         ),
         cancel: cancel.clone(),
+        artifact_store: state.artifact_store.clone(),
+        artifact_public_base: state
+            .artifact_store
+            .as_ref()
+            .map(|_| state.artifact_public_base.clone()),
     };
     let bootstrap = ork_gateways::bootstrap::GatewayBootstrapDeps {
         core,

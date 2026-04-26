@@ -1,6 +1,6 @@
 # 0016 — Artifact / file-management service
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-04-24
 - **Phase:** 3
 - **Relates to:** 0003, 0008, 0011, 0013, 0015, 0017, 0020, 0021

@@ -156,3 +156,12 @@ default_agent = "planner"
 mode = "agent"
 allow_unsigned = true
 # No secret: demo only. Production should set secret_env + HMAC.
+
+# ADR-0016 — local artifact store (relative paths resolve from CWD: stage 0 runs
+# ork-api with `cd demo/`, so `data/artifacts` is demo/data/artifacts).
+[artifacts]
+enabled = true
+default_backend = "fs"
+
+[artifacts.fs]
+root = "data/artifacts"

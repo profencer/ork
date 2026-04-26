@@ -18,6 +18,7 @@ use url::Url;
 use ork_core::a2a::AgentMessage;
 use ork_core::a2a::{AgentId, CallerIdentity};
 use ork_core::agent_registry::AgentRegistry;
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::gateway::Gateway;
 use ork_core::ports::gateway::GatewayAuthResolver;
 use ork_core::ports::gateway::GatewayCard;
@@ -52,6 +53,8 @@ struct RestState {
     allow_agent_override: bool,
     auth: Arc<dyn GatewayAuthResolver>,
     agents: Arc<AgentRegistry>,
+    artifact_store: Option<Arc<dyn ArtifactStore>>,
+    artifact_public_base: Option<String>,
 }
 
 /// Build a REST gateway router and matching [`NoopGateway`] for discovery and lifecycle.
@@ -81,6 +84,8 @@ pub fn build(
         allow_agent_override,
         auth,
         agents: deps.core.agent_registry.clone(),
+        artifact_store: deps.core.artifact_store.clone(),
+        artifact_public_base: deps.core.artifact_public_base.clone(),
     });
     let router = Router::new().route(
         &format!("/api/gateways/rest/{gateway_id}"),
@@ -197,6 +202,8 @@ async fn handle_rest(
         delegation_depth: 0,
         delegation_chain: vec![],
         step_llm_overrides: None,
+        artifact_store: st.artifact_store.clone(),
+        artifact_public_base: st.artifact_public_base.clone(),
     };
     let out = match agent.send(ctx, message).await {
         Ok(m) => m,

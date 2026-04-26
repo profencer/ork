@@ -9,6 +9,7 @@ use ork_common::error::OrkError;
 use ork_common::types::TenantId;
 use ork_core::a2a::AgentMessage;
 use ork_core::a2a::{AgentId, CallerIdentity};
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::gateway::Gateway;
 use ork_core::ports::gateway::GatewayAuthResolver;
 use ork_core::ports::gateway::GatewayCard;
@@ -43,6 +44,8 @@ pub struct EventMeshGateway {
     outbound_topic: Option<String>,
     auth: Arc<dyn GatewayAuthResolver>,
     agents: Arc<ork_core::agent_registry::AgentRegistry>,
+    artifact_store: Option<Arc<dyn ArtifactStore>>,
+    artifact_public_base: Option<String>,
 }
 
 impl EventMeshGateway {
@@ -110,6 +113,8 @@ impl EventMeshGateway {
             outbound_topic,
             auth,
             agents: deps.core.agent_registry.clone(),
+            artifact_store: deps.core.artifact_store.clone(),
+            artifact_public_base: deps.core.artifact_public_base.clone(),
         })
     }
 }
@@ -195,6 +200,8 @@ impl EventMeshGateway {
                         self.tenant,
                         &self.eventing,
                         self.outbound_topic.as_deref(),
+                        self.artifact_store.clone(),
+                        self.artifact_public_base.clone(),
                     )
                     .await
                     {
@@ -216,6 +223,8 @@ impl EventMeshGateway {
         tenant: TenantId,
         eventing: &EventingClient,
         outbound: Option<&str>,
+        artifact_store: Option<Arc<dyn ArtifactStore>>,
+        artifact_public_base: Option<String>,
     ) -> Result<(), OrkError> {
         let v: serde_json::Value = match mode {
             PayloadMode::JsonData => match serde_json::from_slice(payload) {
@@ -272,6 +281,8 @@ impl EventMeshGateway {
             delegation_depth: 0,
             delegation_chain: vec![],
             step_llm_overrides: None,
+            artifact_store,
+            artifact_public_base,
         };
         let out = agent.send(ctx, message).await?;
         if let Some(out_topic) = outbound {

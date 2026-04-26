@@ -1,0 +1,30 @@
+== Stage 4a — Artifact tour workflow (ADR-0016) ==
+
+[info] compiled /…/workflow-templates/artifact-tour.yaml to JSON (… bytes)
+[info] POST http://127.0.0.1:8080/api/workflows
+[info] created workflow id=…
+[info] POST http://127.0.0.1:8080/api/workflows/…/runs
+[info] input.task = ADR-0016 artifact tour: create, append, then list/load
+[info] input.artifact_name = demo/artifact-tour/notes
+[info] started run id=…  (status=pending)
+[info] workflow defines 3 step(s); polling /api/runs/… until terminal
+[info] run … -> running    [seed_file:running(…s)]
+[info] run … -> running    [seed_file:completed(…s)  append_file:running(…s)]
+[info] run … -> running    [seed_file:completed(…s)  append_file:completed(…s)  inventory:running(…s)]
+[info] run … -> completed  [seed_file:completed(…s)  append_file:completed(…s)  inventory:completed(…s)]
+
+[info] final run status: completed
+
+[info] output — seed_file (create_artifact):
+SEED ok version=…
+
+[info] output — append_file (load + append_artifact):
+…
+
+[info] output — inventory (list + meta + load):
+# Artifact tour result
+…
+
+[info] blobs for this run live under `demo/data/artifacts` (gitignored) when using the default FS backend.
+
+== Stage 4a done ==

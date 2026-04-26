@@ -16,6 +16,8 @@ use ork_common::config::{A2aClientToml, AppConfig, RemoteAgentEntryToml, RetryPo
 use ork_common::error::OrkError;
 use ork_core::a2a::AgentId;
 use ork_core::agent_registry::{AgentRegistry, RemoteAgentEntry, TransportHint};
+use ork_core::ports::artifact_meta_repo::ArtifactMetaRepo;
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::delegation_publisher::DelegationPublisher;
 use ork_integrations::a2a_client::builder::resolve_auth_from_toml;
 use ork_integrations::a2a_client::{
@@ -24,6 +26,9 @@ use ork_integrations::a2a_client::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
+
+/// ADR-0016: process-wide `ArtifactStore` + index + public API base for `A2aRemoteAgent` rewrites.
+pub type ArtifactA2aWiring = (Arc<dyn ArtifactStore>, Arc<dyn ArtifactMetaRepo>, String);
 
 /// Translate the toml `[a2a_client]` section into the runtime
 /// [`A2aClientConfig`]. Pure (no IO) so we can unit-test it.
@@ -34,6 +39,7 @@ pub fn a2a_client_config_from_toml(t: &A2aClientToml) -> A2aClientConfig {
         retry: retry_from_toml(&t.retry),
         user_agent: t.user_agent.clone(),
         card_refresh_interval: t.card_refresh_interval(),
+        ..Default::default()
     }
 }
 
@@ -76,17 +82,29 @@ pub async fn build_card_cache(redis_url: &str) -> Arc<dyn KeyValueCache> {
 
 /// Build the shared [`A2aRemoteAgentBuilder`] used by `[[remote_agents]]`, the
 /// discovery subscriber (ADR-0005), and workflow inline cards (ADR-0007 §3).
+///
+/// When `artifacts` is `Some`, ADR-0016 wires outbound `Part::File` (base64) rewrites on
+/// every [`A2aRemoteAgent`] built from this builder.
 pub fn build_remote_builder(
     http: reqwest::Client,
     cache: Arc<dyn KeyValueCache>,
     cfg: &A2aClientToml,
     kafka: Option<Arc<dyn DelegationPublisher>>,
+    // ADR-0016: `Some((store, meta, public_base))` — outbound `Part::File` rewrites for
+    // all `A2aRemoteAgent`s from this process-wide builder.
+    artifacts: Option<ArtifactA2aWiring>,
 ) -> Arc<A2aRemoteAgentBuilder> {
+    let mut client_cfg = a2a_client_config_from_toml(cfg);
+    if let Some((s, m, b)) = artifacts {
+        client_cfg.artifact_store = Some(s);
+        client_cfg.artifact_meta = Some(m);
+        client_cfg.artifact_public_base = Some(b);
+    }
     Arc::new(A2aRemoteAgentBuilder::new(
         http,
         cache,
         A2aAuth::None,
-        a2a_client_config_from_toml(cfg),
+        client_cfg,
         kafka,
     ))
 }

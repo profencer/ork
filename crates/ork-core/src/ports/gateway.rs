@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::a2a::{AgentContext, AgentEvent, AgentId, CallerIdentity};
 use crate::agent_registry::AgentRegistry;
 use crate::ports::a2a_task_repo::A2aTaskRepository;
+use crate::ports::artifact_store::ArtifactStore;
 use tokio_util::sync::CancellationToken;
 
 /// Stable identifier for a gateway instance in config and discovery.
@@ -76,6 +77,8 @@ impl TranslatedRequest {
         tenant_id: TenantId,
         caller: CallerIdentity,
         cancel: CancellationToken,
+        artifact_store: Option<Arc<dyn ArtifactStore>>,
+        artifact_public_base: Option<String>,
     ) -> (AgentContext, AgentMessage) {
         let task_id = TaskId::new();
         let ctx = AgentContext {
@@ -92,6 +95,8 @@ impl TranslatedRequest {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store,
+            artifact_public_base,
         };
         (ctx, self.message)
     }
@@ -128,6 +133,10 @@ pub struct GatewayDeps {
     pub a2a_repo: Arc<dyn A2aTaskRepository>,
     pub auth_resolver: Arc<dyn GatewayAuthResolver>,
     pub cancel: CancellationToken,
+    /// ADR-0016: same wiring as the primary A2A server when `[artifacts] enabled`.
+    pub artifact_store: Option<Arc<dyn ArtifactStore>>,
+    /// Public API base for `Part::file` proxy URIs when `presign_get` is unavailable.
+    pub artifact_public_base: Option<String>,
 }
 
 /// Long-lived ingress component (HTTP server mount, Kafka consumers, etc.).
@@ -236,7 +245,7 @@ mod tests {
             context_id: None,
             workflow_input: serde_json::json!({ "k": 1 }),
         }
-        .into_agent_context(tenant, caller, cancel);
+        .into_agent_context(tenant, caller, cancel, None, None);
         assert_eq!(ctx.tenant_id, tenant);
         assert_eq!(ctx.workflow_input, serde_json::json!({ "k": 1 }));
         assert!(!ctx.caller.scopes.is_empty());

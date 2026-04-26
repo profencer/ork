@@ -132,6 +132,8 @@ fn ctx() -> AgentContext {
         delegation_depth: 0,
         delegation_chain: Vec::new(),
         step_llm_overrides: None,
+        artifact_store: None,
+        artifact_public_base: None,
     }
 }
 

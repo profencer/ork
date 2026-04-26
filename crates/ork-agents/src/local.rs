@@ -3,22 +3,26 @@ use std::sync::Arc;
 
 use async_stream::stream;
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::{StreamExt, future::join_all};
 use ork_a2a::{
-    AgentCard, Message as AgentMessage, MessageId, Part, Role, TaskEvent as AgentEvent, TaskState,
-    TaskStatus, TaskStatusUpdateEvent,
+    AgentCard, FileRef, Message as AgentMessage, MessageId, Part, Role, TaskEvent as AgentEvent,
+    TaskState, TaskStatus, TaskStatusUpdateEvent,
 };
 use ork_common::error::OrkError;
 use ork_core::a2a::card_builder::{CardEnrichmentContext, build_local_card};
 use ork_core::a2a::{AgentContext, AgentId, ResolveContext};
+use ork_core::artifact_spill::spill_bytes_to_artifact;
 use ork_core::models::agent::AgentConfig;
 use ork_core::ports::agent::{Agent, AgentEventStream};
+use ork_core::ports::artifact_store::ArtifactScope;
 use ork_core::ports::llm::{
     ChatMessage, ChatRequest, ChatStreamEvent, FinishReason, LlmProvider, ToolCall, ToolChoice,
 };
 use ork_core::workflow::engine::ToolExecutor;
 use tokio::sync::Semaphore;
-use tracing::info;
+use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::tool_catalog::ToolCatalogBuilder;
 
@@ -110,8 +114,47 @@ fn truncate_tool_result(serialized: String, max_bytes: usize) -> (String, bool) 
     }
     let mut out = serialized;
     out.truncate(max_bytes);
-    out.push_str("\n...[truncated; full artifact spillover TODO(ADR-0016)]");
+    out.push_str("\n...[truncated]");
     (out, true)
+}
+
+/// ADR-0011 / ADR-0016: when a tool result exceeds the byte cap, store the full JSON and
+/// return a short pointer the LLM can use (fetch via `artifact_uri` or tools).
+async fn try_spill_oversized_tool_result(ctx: &AgentContext, serialized: String) -> Option<String> {
+    let store = ctx.artifact_store.as_ref()?;
+    let scope = ArtifactScope {
+        tenant_id: ctx.tenant_id,
+        context_id: ctx.context_id,
+    };
+    let name = format!("tool_result/{}", Uuid::new_v4());
+    let (aref, part) = spill_bytes_to_artifact(
+        store,
+        ctx.artifact_public_base.as_deref(),
+        &scope,
+        &name,
+        Bytes::from(serialized.into_bytes()),
+        Some("application/json".into()),
+        Some(ctx.task_id),
+    )
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "tool result artifact spill failed");
+        e
+    })
+    .ok()?;
+    let uri = match &part {
+        Part::File {
+            file: FileRef::Uri { uri, .. },
+            ..
+        } => uri.to_string(),
+        _ => return None,
+    };
+    let v = serde_json::json!({
+        "ork_spilled_tool_result": true,
+        "artifact_ref": aref.to_wire(),
+        "artifact_uri": uri,
+    });
+    serde_json::to_string(&v).ok()
 }
 
 async fn execute_tool_call(
@@ -131,7 +174,15 @@ async fn execute_tool_call(
     let output = tools.execute(&ctx, &call.name, &call.arguments).await?;
     let serialized = serde_json::to_string(&output)
         .map_err(|e| OrkError::Internal(format!("serialize tool result: {e}")))?;
-    let (content, truncated) = truncate_tool_result(serialized, max_tool_result_bytes);
+    let (content, truncated) = if serialized.len() > max_tool_result_bytes {
+        if let Some(s) = try_spill_oversized_tool_result(&ctx, serialized.clone()).await {
+            (s, false)
+        } else {
+            truncate_tool_result(serialized, max_tool_result_bytes)
+        }
+    } else {
+        (serialized, false)
+    };
     Ok((call.id, content, truncated))
 }
 
@@ -435,7 +486,7 @@ impl Agent for LocalAgent {
                     if truncated {
                         yield Ok(status_text(
                             task_id,
-                            "tool result truncated; artifact spillover TODO(ADR-0016)",
+                            "tool result truncated (byte cap); configure artifact store + public base for spillover",
                             false,
                         ));
                     }
@@ -554,6 +605,8 @@ mod tests {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store: None,
+            artifact_public_base: None,
         }
     }
 

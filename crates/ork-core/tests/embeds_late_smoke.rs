@@ -29,14 +29,15 @@ fn msg(text: &str) -> AgentEvent {
 async fn splits_embed_across_two_message_events() {
     let registry = Arc::new(EmbedRegistry::with_builtins());
     let tid = TaskId::new();
-    let embed_ctx = Arc::new(EmbedContext {
-        tenant_id: TenantId(Uuid::new_v4()),
-        task_id: Some(tid),
-        a2a_repo: None,
-        now: chrono::Utc::now(),
-        variables: HashMap::new(),
-        depth: 0,
-    });
+    let embed_ctx = Arc::new(EmbedContext::with_limits(
+        TenantId(Uuid::new_v4()),
+        None,
+        Some(tid),
+        None,
+        chrono::Utc::now(),
+        HashMap::new(),
+        &EmbedLimits::default(),
+    ));
     let inner: AgentEventStream = Box::pin(futures::stream::iter(vec![
         Ok(msg("before «")),
         Ok(AgentEvent::StatusUpdate(TaskStatusUpdateEvent {

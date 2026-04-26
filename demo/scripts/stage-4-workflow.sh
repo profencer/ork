@@ -328,4 +328,4 @@ printf '%s' "$RUN" | jq -r '
 '
 
 banner "Stage 4 done"
-log_info "next: make -C demo demo-stage-5"
+log_info "next: \`make -C demo demo-stage-4a\` (ADR-0016 artifact tour) then \`make -C demo demo-stage-5\`"

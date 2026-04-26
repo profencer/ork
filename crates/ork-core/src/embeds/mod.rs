@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ork_a2a::{Part, TaskId};
+use ork_a2a::{ContextId, Part, TaskId};
+
+use crate::ports::artifact_store::ArtifactStore;
 use ork_common::types::TenantId;
 use thiserror::Error;
 
@@ -74,9 +76,17 @@ impl Default for EmbedLimits {
 #[derive(Clone)]
 pub struct EmbedContext {
     pub tenant_id: TenantId,
+    /// ADR-0016: optional conversation scope; `None` = tenant-scoped only.
+    pub context_id: Option<ContextId>,
     pub task_id: Option<TaskId>,
     /// When missing, `status_update` and similar handlers fail.
     pub a2a_repo: Option<Arc<dyn A2aTaskRepository>>,
+    /// ADR-0016: optional blob store for `artifact_content` / `artifact_meta` embeds.
+    pub artifact_store: Option<Arc<dyn ArtifactStore>>,
+    /// When `presign_get` is unavailable, build `GET {base}/api/artifacts/…` URLs (no trailing path).
+    pub artifact_public_base: Option<String>,
+    /// Same value as [`EmbedLimits::max_late_embed_output_bytes`] for this resolve pass.
+    pub max_late_embed_output_bytes: usize,
     pub now: DateTime<Utc>,
     /// Early `«var:…»` map (callers may extend later).
     pub variables: HashMap<String, String>,
@@ -85,6 +95,31 @@ pub struct EmbedContext {
 }
 
 impl EmbedContext {
+    /// Seed a context with [`EmbedLimits`]-driven output caps. Artifact fields start unset.
+    #[must_use]
+    pub fn with_limits(
+        tenant_id: TenantId,
+        context_id: Option<ContextId>,
+        task_id: Option<TaskId>,
+        a2a_repo: Option<Arc<dyn A2aTaskRepository>>,
+        now: DateTime<Utc>,
+        variables: HashMap<String, String>,
+        limits: &EmbedLimits,
+    ) -> Self {
+        Self {
+            tenant_id,
+            context_id,
+            task_id,
+            a2a_repo,
+            artifact_store: None,
+            artifact_public_base: None,
+            max_late_embed_output_bytes: limits.max_late_embed_output_bytes,
+            now,
+            variables,
+            depth: 0,
+        }
+    }
+
     #[must_use]
     pub fn with_depth(&self, depth: usize) -> Self {
         Self {
@@ -101,7 +136,8 @@ pub struct EmbedRegistry {
 }
 
 impl EmbedRegistry {
-    /// Built-in handler set: `math`, `datetime`, `uuid`, `var`, `status_update`.
+    /// Built-in handler set: `math`, `datetime`, `uuid`, `var`, `status_update`,
+    /// `artifact_content`, `artifact_meta` (ADR-0016).
     #[must_use]
     pub fn with_builtins() -> Self {
         let mut r = Self::default();
@@ -136,7 +172,7 @@ pub trait EmbedHandler: Send + Sync {
 
 pub use early::{resolve_early, resolve_early_counted};
 
-/// When late-phase expansion exceeds size limits, emit this string until ADR-0016 provides real artifact refs.
+/// When late-phase expansion exceeds size limits and artifact spill is unavailable, emit this marker.
 pub const LATE_EMBED_OUTPUT_TRUNCATED: &str = "[ork:ref:late_output_truncated]";
 
 /// Maps `input.embed_variables` (JSON object of strings) to `«var:…»` keys.

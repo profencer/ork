@@ -1,0 +1,43 @@
+{
+  "name": "artifact-tour",
+  "version": "1.0",
+  "trigger": {
+    "type": "manual"
+  },
+  "steps": [
+    {
+      "id": "seed_file",
+      "agent": "writer",
+      "tools": [
+        "create_artifact"
+      ],
+      "prompt_template": "Task: {{input.task}}\n\nADR-0015 dynamic embeds (expanded on the server before the LLM; do not copy these tokens into tool args):\nrun_label=«var:artifact_demo_label»  sample=«math:6*7 | int»  marker=«uuid:»\n\nYou are demoing the `create_artifact` tool. Do NOT use agent_call or any MCP tool.\n\nCall `create_artifact` exactly once with:\n- name: {{input.artifact_name}}\n- mime: text/markdown\n- data: a UTF-8 string with two lines. First line must be exactly: {{input.seed_line}}\n  Second line: one short sentence that this is version 1 from workflow step `seed_file`.\n\nAfter the tool returns JSON, reply with a single line:\nSEED ok version=<n> ref=<value of ref from tool output>\n",
+      "depends_on": []
+    },
+    {
+      "id": "append_file",
+      "agent": "writer",
+      "tools": [
+        "append_artifact",
+        "load_artifact"
+      ],
+      "prompt_template": "Task: {{input.task}}\n\nArtifact logical name (must match create step): {{input.artifact_name}}\n\n1) Call `load_artifact` with name \"{{input.artifact_name}}\" and version 0 (latest).\n2) Call `append_artifact` with the same name and `data` set to a UTF-8 string\n   containing EXACTLY one new line, with no extra lines:\n   {{input.append_line}}\n\n3) Reply with two lines: SNIPPET=<first 100 chars of text from load>  APPEND=done\n",
+      "depends_on": [
+        "seed_file"
+      ]
+    },
+    {
+      "id": "inventory",
+      "agent": "writer",
+      "tools": [
+        "list_artifacts",
+        "artifact_meta",
+        "load_artifact"
+      ],
+      "prompt_template": "Task: {{input.task}}\n\n1) Call `list_artifacts` with prefix \"demo/artifact-tour/\".\n2) Call `artifact_meta` for name \"{{input.artifact_name}}\" and version 0.\n3) Call `load_artifact` for that name, version 0, max_inline_bytes 8192.\n4) Print a short markdown report: heading \"Artifact tour result\", then bullet\n   list with latest version, size, mime, and a fenced markdown code block\n   with the full file text.\n",
+      "depends_on": [
+        "append_file"
+      ]
+    }
+  ]
+}

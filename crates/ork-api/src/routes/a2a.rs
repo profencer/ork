@@ -35,6 +35,7 @@ use ork_core::streaming::late_embed::LateEmbedResolver;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use crate::artifact_inbound;
 use crate::middleware::AuthContext;
 use crate::state::AppState;
 
@@ -260,6 +261,27 @@ async fn handle_message_send(
         return internal_err(env.id, e);
     }
 
+    let parts = match (&state.artifact_store, &state.artifact_meta) {
+        (Some(store), Some(meta)) => {
+            match artifact_inbound::rewrite_inbound_file_parts(
+                store,
+                meta,
+                &state.artifact_public_base,
+                auth.tenant_id,
+                context_id,
+                task_id,
+                params.message.message_id,
+                params.message.parts.clone(),
+            )
+            .await
+            {
+                Ok(p) => p,
+                Err(e) => return internal_err(env.id, e),
+            }
+        }
+        _ => params.message.parts.clone(),
+    };
+
     // Persist the inbound user turn. Best-effort: a failure here should not abort
     // the call (the agent invocation has not run yet); we log and move on.
     if let Err(e) = state
@@ -268,7 +290,7 @@ async fn handle_message_send(
             id: params.message.message_id,
             task_id,
             role: role_to_wire(params.message.role).to_string(),
-            parts: serde_json::to_value(&params.message.parts).unwrap_or(serde_json::Value::Null),
+            parts: serde_json::to_value(&parts).unwrap_or(serde_json::Value::Null),
             metadata: serde_json::json!({}),
             created_at: now,
         })
@@ -279,7 +301,7 @@ async fn handle_message_send(
 
     let inbound = A2aMessage {
         role: params.message.role,
-        parts: params.message.parts.clone(),
+        parts,
         message_id: params.message.message_id,
         task_id: Some(task_id),
         context_id: Some(context_id),
@@ -300,6 +322,11 @@ async fn handle_message_send(
         delegation_depth: 0,
         delegation_chain: Vec::new(),
         step_llm_overrides: None,
+        artifact_store: state.artifact_store.clone(),
+        artifact_public_base: state
+            .artifact_store
+            .as_ref()
+            .map(|_| state.artifact_public_base.clone()),
     };
 
     let result = agent.send(ctx, inbound).await;
@@ -404,13 +431,35 @@ async fn handle_message_stream(
     {
         return internal_err(env.id, e);
     }
+
+    let parts = match (&state.artifact_store, &state.artifact_meta) {
+        (Some(store), Some(meta)) => {
+            match artifact_inbound::rewrite_inbound_file_parts(
+                store,
+                meta,
+                &state.artifact_public_base,
+                auth.tenant_id,
+                context_id,
+                task_id,
+                params.message.message_id,
+                params.message.parts.clone(),
+            )
+            .await
+            {
+                Ok(p) => p,
+                Err(e) => return internal_err(env.id, e),
+            }
+        }
+        _ => params.message.parts.clone(),
+    };
+
     if let Err(e) = state
         .a2a_task_repo
         .append_message(&A2aMessageRow {
             id: params.message.message_id,
             task_id,
             role: role_to_wire(params.message.role).to_string(),
-            parts: serde_json::to_value(&params.message.parts).unwrap_or(serde_json::Value::Null),
+            parts: serde_json::to_value(&parts).unwrap_or(serde_json::Value::Null),
             metadata: serde_json::json!({}),
             created_at: now,
         })
@@ -421,7 +470,7 @@ async fn handle_message_stream(
 
     let inbound = A2aMessage {
         role: params.message.role,
-        parts: params.message.parts.clone(),
+        parts,
         message_id: params.message.message_id,
         task_id: Some(task_id),
         context_id: Some(context_id),
@@ -442,6 +491,11 @@ async fn handle_message_stream(
         delegation_depth: 0,
         delegation_chain: Vec::new(),
         step_llm_overrides: None,
+        artifact_store: state.artifact_store.clone(),
+        artifact_public_base: state
+            .artifact_store
+            .as_ref()
+            .map(|_| state.artifact_public_base.clone()),
     };
 
     let id = env.id.clone();
@@ -450,14 +504,21 @@ async fn handle_message_stream(
         Err(e) => return internal_err(env.id, e),
     };
 
-    let embed_ctx = Arc::new(EmbedContext {
-        tenant_id: auth.tenant_id,
-        task_id: Some(task_id),
-        a2a_repo: Some(state.a2a_task_repo.clone()),
-        now: chrono::Utc::now(),
-        variables: HashMap::new(),
-        depth: 0,
-    });
+    let mut embed_base = EmbedContext::with_limits(
+        auth.tenant_id,
+        Some(context_id),
+        Some(task_id),
+        Some(state.a2a_task_repo.clone()),
+        chrono::Utc::now(),
+        HashMap::new(),
+        &state.embed_limits,
+    );
+    embed_base.artifact_store = state.artifact_store.clone();
+    embed_base.artifact_public_base = state
+        .artifact_store
+        .as_ref()
+        .map(|_| state.artifact_public_base.clone());
+    let embed_ctx = Arc::new(embed_base);
     let stream = LateEmbedResolver::new(
         state.embed_registry.clone(),
         embed_ctx,
@@ -722,6 +783,8 @@ async fn handle_tasks_cancel(
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store: None,
+            artifact_public_base: None,
         };
         if let Err(e) = agent.cancel(ctx, &params.id).await
             && !matches!(e, ork_common::error::OrkError::Unsupported(_))

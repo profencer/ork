@@ -1,0 +1,73 @@
+# Demo workflow: ADR-0016 artifact create → append → list/meta/load
+# Drives the `writer` agent through three tool-heavy steps. Requires
+# `[artifacts] enabled` and a real LLM (same as stage 4).
+#
+# Templating (not the same thing as “the embedding model”):
+#   - {{input.field}} — workflow run JSON; resolved first (`resolve_template`).
+#   - «type:expr | format» — ADR-0015 dynamic embeds, Unicode guillemets
+#     (U+00AB « … U+00BB »), NOT << ASCII chevrons. Resolved after `{{…}}`
+#     (`resolve_prompt_embeds`). «var:key» reads `input.embed_variables.key`.
+name: artifact-tour
+version: "1.0"
+trigger:
+  type: manual
+
+steps:
+  - id: seed_file
+    agent: writer
+    tools:
+      - create_artifact
+    prompt_template: >
+      Task: {{input.task}}
+
+      ADR-0015 dynamic embeds (expanded on the server before the LLM; do not copy these tokens into tool args):
+      run_label=«var:artifact_demo_label»  sample=«math:6*7 | int»  marker=«uuid:»
+
+      You are demoing the `create_artifact` tool. Do NOT use agent_call or any MCP tool.
+
+      Call `create_artifact` exactly once with:
+      - name: {{input.artifact_name}}
+      - mime: text/markdown
+      - data: a UTF-8 string with two lines. First line must be exactly: {{input.seed_line}}
+        Second line: one short sentence that this is version 1 from workflow step `seed_file`.
+
+      After the tool returns JSON, reply with a single line:
+      SEED ok version=<n> ref=<value of ref from tool output>
+    depends_on: []
+
+  - id: append_file
+    agent: writer
+    tools:
+      - append_artifact
+      - load_artifact
+    prompt_template: >
+      Task: {{input.task}}
+
+      Artifact logical name (must match create step): {{input.artifact_name}}
+
+      1) Call `load_artifact` with name "{{input.artifact_name}}" and version 0 (latest).
+      2) Call `append_artifact` with the same name and `data` set to a UTF-8 string
+         containing EXACTLY one new line, with no extra lines:
+         {{input.append_line}}
+
+      3) Reply with two lines: SNIPPET=<first 100 chars of text from load>  APPEND=done
+    depends_on:
+      - seed_file
+
+  - id: inventory
+    agent: writer
+    tools:
+      - list_artifacts
+      - artifact_meta
+      - load_artifact
+    prompt_template: >
+      Task: {{input.task}}
+
+      1) Call `list_artifacts` with prefix "demo/artifact-tour/".
+      2) Call `artifact_meta` for name "{{input.artifact_name}}" and version 0.
+      3) Call `load_artifact` for that name, version 0, max_inline_bytes 8192.
+      4) Print a short markdown report: heading "Artifact tour result", then bullet
+         list with latest version, size, mime, and a fenced markdown code block
+         with the full file text.
+    depends_on:
+      - append_file

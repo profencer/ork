@@ -32,6 +32,8 @@ use ork_a2a::{
 use ork_common::error::OrkError;
 use ork_core::a2a::context::{AgentContext, AgentId};
 use ork_core::ports::agent::{Agent, AgentEventStream};
+use ork_core::ports::artifact_meta_repo::ArtifactMetaRepo;
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::delegation_publisher::DelegationPublisher;
 use reqwest::StatusCode;
 use secrecy::SecretString;
@@ -42,6 +44,7 @@ use tokio::sync::Mutex;
 use super::auth::{A2aAuth, TokenProvider, apply_auth, fetch_client_credentials_token};
 use super::config::{A2aClientConfig, RetryPolicy};
 use super::sse::parse_a2a_sse;
+use crate::artifact_wire::rewrite_inline_file_parts_to_uris;
 
 /// Routing decision for a single call. `Kafka` only fires when the card's
 /// `transport-hint` extension carries a request topic, the agent has a
@@ -98,6 +101,10 @@ pub struct A2aRemoteAgent {
     /// Per-agent in-process lock used to serialize CC token refreshes for that
     /// agent (the cache itself is already process-wide).
     _cc_refresh_lock: Mutex<()>,
+    /// ADR-0016: optional outbound `Part::File` (bytes) → proxy URI; set from [`A2aClientConfig`].
+    artifact_store: Option<Arc<dyn ArtifactStore>>,
+    artifact_meta: Option<Arc<dyn ArtifactMetaRepo>>,
+    artifact_public_base: Option<String>,
 }
 
 impl A2aRemoteAgent {
@@ -130,7 +137,42 @@ impl A2aRemoteAgent {
             tenant_header,
             token_provider,
             _cc_refresh_lock: Mutex::new(()),
+            artifact_store: cfg.artifact_store.clone(),
+            artifact_meta: cfg.artifact_meta.clone(),
+            artifact_public_base: cfg.artifact_public_base.clone(),
         }
+    }
+
+    /// When [`Self::artifact_store`], `artifact_meta`, and `artifact_public_base` are
+    /// set, replace `Part::File` base64 in `message` with stored proxy URIs (ADR-0016).
+    async fn rewrite_outbound_file_parts(
+        &self,
+        ctx: &AgentContext,
+        msg: &mut ork_core::a2a::AgentMessage,
+    ) -> Result<(), OrkError> {
+        let (Some(store), Some(meta), Some(base)) = (
+            &self.artifact_store,
+            &self.artifact_meta,
+            &self.artifact_public_base,
+        ) else {
+            return Ok(());
+        };
+        let context_id = msg.context_id.or(ctx.context_id).unwrap_or_default();
+        let task_id = ctx.task_id;
+        let parts = rewrite_inline_file_parts_to_uris(
+            store,
+            meta,
+            base.as_str(),
+            ctx.tenant_id,
+            context_id,
+            task_id,
+            msg.message_id,
+            "outbound",
+            std::mem::take(&mut msg.parts),
+        )
+        .await?;
+        msg.parts = parts;
+        Ok(())
     }
 
     /// Decide between HTTP and the Kafka short-circuit. The Kafka path only fires
@@ -455,8 +497,9 @@ impl Agent for A2aRemoteAgent {
     async fn send(
         &self,
         ctx: AgentContext,
-        msg: ork_core::a2a::AgentMessage,
+        mut msg: ork_core::a2a::AgentMessage,
     ) -> Result<ork_core::a2a::AgentMessage, OrkError> {
+        self.rewrite_outbound_file_parts(&ctx, &mut msg).await?;
         let envelope = JsonRpcRequest::new(
             Some(serde_json::Value::String(ctx.task_id.to_string())),
             A2aMethod::MessageSend,
@@ -480,8 +523,9 @@ impl Agent for A2aRemoteAgent {
     async fn send_stream(
         &self,
         ctx: AgentContext,
-        msg: ork_core::a2a::AgentMessage,
+        mut msg: ork_core::a2a::AgentMessage,
     ) -> Result<AgentEventStream, OrkError> {
+        self.rewrite_outbound_file_parts(&ctx, &mut msg).await?;
         let envelope = JsonRpcRequest::new(
             Some(serde_json::Value::String(ctx.task_id.to_string())),
             A2aMethod::MessageStream,

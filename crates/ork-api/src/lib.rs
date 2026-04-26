@@ -4,6 +4,9 @@
 //! `main.rs` continues to drive process lifecycle; everything else lives behind these
 //! `pub mod` re-exports.
 
+pub mod artifact_inbound;
+pub mod artifact_retention;
+pub mod artifacts_boot;
 pub mod eventing;
 pub mod gateways;
 pub mod llm_catalog;

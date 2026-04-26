@@ -15,6 +15,7 @@ members = [
     "crates/ork-persistence",
     "crates/ork-common",
     "crates/ork-push",
+    "crates/ork-storage",
 ]
 exclude = [
     "demo/peer-agent",
@@ -43,6 +44,7 @@ ork-mcp = { path = "crates/ork-mcp" }
 ork-persistence = { path = "crates/ork-persistence" }
 ork-common = { path = "crates/ork-common" }
 ork-push = { path = "crates/ork-push" }
+ork-storage = { path = "crates/ork-storage" }
 
 # Web framework
 axum = "0.8"
@@ -78,6 +80,7 @@ octocrab = "0.44"
 
 # Utilities
 url = "2"
+urlencoding = "2.1"
 base64 = "0.22"
 uuid = { version = "1", features = ["v7", "v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -102,6 +105,14 @@ evalexpr = "11.3"
 # Eventing / Kafka (pure-Rust client per ADR 0004)
 rskafka = { version = "0.6", default-features = false }
 bytes = "1"
+
+# ADR-0016 artifact storage (S3 + MinIO)
+aws-config = { version = "1.5" }
+aws-sdk-s3 = { version = "1" }
+aws-smithy-types = { version = "1" }
+aws-types = { version = "1" }
+mime_guess = "2"
+tempfile = "3"
 
 # A2A remote agent (ADR 0007)
 eventsource-stream = "0.2"

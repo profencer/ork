@@ -3,6 +3,8 @@ pub mod a2a_push_repo;
 pub mod a2a_signing_key_repo;
 pub mod a2a_task_repo;
 pub mod agent;
+pub mod artifact_meta_repo;
+pub mod artifact_store;
 pub mod delegation_publisher;
 pub mod gateway;
 pub mod integration;

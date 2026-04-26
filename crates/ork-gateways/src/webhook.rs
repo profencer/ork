@@ -15,6 +15,7 @@ use ork_common::types::TenantId;
 use ork_core::a2a::AgentMessage;
 use ork_core::a2a::{AgentId, CallerIdentity};
 use ork_core::models::workflow::WorkflowTrigger;
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::gateway::Gateway;
 use ork_core::ports::gateway::GatewayAuthResolver;
 use ork_core::ports::gateway::GatewayCard;
@@ -124,6 +125,8 @@ struct WebhookState {
     tenant_service: Arc<ork_core::services::tenant::TenantService>,
     workflow_service: Arc<ork_core::services::workflow::WorkflowService>,
     engine: Arc<ork_core::workflow::engine::WorkflowEngine>,
+    artifact_store: Option<Arc<dyn ArtifactStore>>,
+    artifact_public_base: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -195,6 +198,8 @@ pub fn build(
         tenant_service: deps.tenant_service.clone(),
         workflow_service: deps.workflow_service.clone(),
         engine: deps.engine.clone(),
+        artifact_store: deps.core.artifact_store.clone(),
+        artifact_public_base: deps.core.artifact_public_base.clone(),
     });
     let router = Router::new().route(
         &format!("/api/gateways/webhook/{gateway_id}"),
@@ -343,6 +348,8 @@ async fn handle(
         delegation_depth: 0,
         delegation_chain: vec![],
         step_llm_overrides: None,
+        artifact_store: st.artifact_store.clone(),
+        artifact_public_base: st.artifact_public_base.clone(),
     };
     tokio::spawn(async move {
         if let Err(e) = agent.send(ctx, message).await {

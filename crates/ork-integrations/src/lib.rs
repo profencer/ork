@@ -1,5 +1,8 @@
 pub mod a2a_client;
 pub mod agent_call;
+pub mod artifact_tools;
+/// ADR-0016: `Part::File` base64 → [`ArtifactStore`] + proxy URI.
+pub mod artifact_wire;
 pub mod code_tools;
 pub mod github;
 pub mod gitlab;

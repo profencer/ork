@@ -2,6 +2,7 @@ pub mod a2a_push_dead_letter_repo;
 pub mod a2a_push_repo;
 pub mod a2a_signing_key_repo;
 pub mod a2a_task_repo;
+pub mod artifact_meta_repo;
 pub mod tenant_repo;
 pub mod workflow_repo;
 

@@ -8,6 +8,7 @@ use ork_common::error::OrkError;
 use ork_common::types::TenantId;
 use ork_core::a2a::AgentMessage;
 use ork_core::a2a::{AgentId, CallerIdentity};
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::gateway::Gateway;
 use ork_core::ports::gateway::GatewayAuthResolver;
 use ork_core::ports::gateway::GatewayCard;
@@ -40,6 +41,8 @@ pub struct OrkMcpServer {
     pub auth: Arc<dyn GatewayAuthResolver>,
     pub tenant: TenantId,
     pub gateway_id: String,
+    pub artifact_store: Option<Arc<dyn ArtifactStore>>,
+    pub artifact_public_base: Option<String>,
 }
 
 impl OrkMcpServer {
@@ -127,6 +130,8 @@ impl OrkMcpServer {
             delegation_depth: 0,
             delegation_chain: vec![],
             step_llm_overrides: None,
+            artifact_store: self.artifact_store.clone(),
+            artifact_public_base: self.artifact_public_base.clone(),
         };
         let out = agent.send(ctx, message).await.map_err(map_ork_to_mcp)?;
         let body = response_text(&out);
@@ -270,6 +275,8 @@ pub fn build(
     let auth: Arc<dyn GatewayAuthResolver> =
         Arc::new(StaticGatewayAuthResolver::from_config(config)?);
     let registry = deps.core.agent_registry.clone();
+    let artifact_store = deps.core.artifact_store.clone();
+    let artifact_public_base = deps.core.artifact_public_base.clone();
     let gw_id = gateway_id.to_string();
     let cancel = deps.core.cancel.clone();
     let service: StreamableHttpService<OrkMcpServer, LocalSessionManager> =
@@ -278,12 +285,16 @@ pub fn build(
                 let registry = registry.clone();
                 let auth = auth.clone();
                 let gateway_id = gw_id.clone();
+                let artifact_store = artifact_store.clone();
+                let artifact_public_base = artifact_public_base.clone();
                 move || {
                     Ok(OrkMcpServer {
                         registry: registry.clone(),
                         auth: auth.clone(),
                         tenant,
                         gateway_id: gateway_id.clone(),
+                        artifact_store: artifact_store.clone(),
+                        artifact_public_base: artifact_public_base.clone(),
                     })
                 }
             },

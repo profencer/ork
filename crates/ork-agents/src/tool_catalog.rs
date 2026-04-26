@@ -7,6 +7,7 @@ use ork_core::a2a::{AgentContext, AgentId};
 use ork_core::agent_registry::{AgentRegistry, PeerToolDescription};
 use ork_core::models::agent::AgentConfig;
 use ork_core::ports::llm::ToolDescriptor;
+use ork_integrations::artifact_tools;
 use ork_integrations::code_tools::CodeToolExecutor;
 use ork_integrations::tools::IntegrationToolExecutor;
 use serde_json::json;
@@ -55,7 +56,7 @@ impl ToolCatalogBuilder {
         let mut out = Vec::new();
 
         out.extend(self.builtin_descriptors(&config.id).await?);
-        out.extend(artifact_descriptors());
+        out.extend(artifact_tools::artifact_tool_descriptors());
 
         for descriptor in CodeToolExecutor::descriptors() {
             if allow_list_matches(&config.tools, &descriptor.name) {
@@ -149,12 +150,6 @@ fn agent_call_descriptor() -> ToolDescriptor {
             "required": ["agent", "prompt"]
         }),
     }
-}
-
-fn artifact_descriptors() -> Vec<ToolDescriptor> {
-    // TODO(ADR-0016): expose artifact_put/artifact_get once artifact storage is
-    // part of the agent runtime. ADR 0011 only reserves this catalog seam.
-    Vec::new()
 }
 
 fn allow_list_matches(allow_list: &[String], name: &str) -> bool {
@@ -258,6 +253,8 @@ mod tests {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store: None,
+            artifact_public_base: None,
         }
     }
 

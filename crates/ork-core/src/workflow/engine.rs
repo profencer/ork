@@ -21,6 +21,7 @@ use crate::models::workflow::{
 use crate::ports::a2a_push_repo::{A2aPushConfigRepository, A2aPushConfigRow};
 use crate::ports::a2a_task_repo::{A2aTaskRepository, A2aTaskRow};
 use crate::ports::agent::Agent;
+use crate::ports::artifact_store::ArtifactStore;
 use crate::ports::delegation_publisher::DelegationPublisher;
 use crate::ports::remote_agent_builder::RemoteAgentBuilder;
 use crate::ports::repository::WorkflowRepository;
@@ -62,6 +63,10 @@ pub struct WorkflowEngine {
     /// ADR-0015: dynamic `«type:…»` embeds on prompts (early phase).
     embed_registry: Arc<EmbedRegistry>,
     embed_limits: EmbedLimits,
+    /// ADR-0016: optional blob store for tools and spillover in workflow steps.
+    artifact_store: Option<Arc<dyn ArtifactStore>>,
+    /// ADR-0016: public API origin for proxy `Part::file` URIs when the store has no `presign_get`.
+    artifact_public_base: Option<String>,
 }
 
 /// Abstraction for executing agent tools during workflow steps.
@@ -94,7 +99,24 @@ impl WorkflowEngine {
             a2a_push_repo: None,
             embed_registry: Arc::new(EmbedRegistry::with_builtins()),
             embed_limits: EmbedLimits::default(),
+            artifact_store: None,
+            artifact_public_base: None,
         }
+    }
+
+    /// ADR-0016: wire the shared [`ArtifactStore`] into every step [`AgentContext`].
+    #[must_use]
+    pub fn with_artifact_store(mut self, store: Option<Arc<dyn ArtifactStore>>) -> Self {
+        self.artifact_store = store;
+        self
+    }
+
+    /// ADR-0016: public base URL (no trailing path) for proxy artifact URLs; pair with
+    /// [`Self::with_artifact_store`].
+    #[must_use]
+    pub fn with_artifact_public_base(mut self, base: Option<String>) -> Self {
+        self.artifact_public_base = base;
+        self
     }
 
     /// ADR-0009 ↔ ADR-0006 push notifications: install the
@@ -160,14 +182,17 @@ impl WorkflowEngine {
         for (k, v) in extra_variables {
             variables.insert(k.clone(), v.clone());
         }
-        let ctx = EmbedContext {
+        let mut ctx = EmbedContext::with_limits(
             tenant_id,
+            None,
             task_id,
-            a2a_repo: self.a2a_tasks.clone(),
-            now: Utc::now(),
+            self.a2a_tasks.clone(),
+            Utc::now(),
             variables,
-            depth: 0,
-        };
+            &self.embed_limits,
+        );
+        ctx.artifact_store = self.artifact_store.clone();
+        ctx.artifact_public_base = self.artifact_public_base.clone();
         resolve_early(prompt, &ctx, &self.embed_registry, &self.embed_limits).await
     }
 
@@ -512,6 +537,8 @@ impl WorkflowEngine {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides,
+            artifact_store: self.artifact_store.clone(),
+            artifact_public_base: self.artifact_public_base.clone(),
         };
 
         // ADR 0006 §`Persistence` / demo `Known engine gaps` regression:
@@ -718,6 +745,8 @@ impl WorkflowEngine {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store: self.artifact_store.clone(),
+            artifact_public_base: self.artifact_public_base.clone(),
         };
 
         // ADR 0006 §`Persistence` / demo `Known engine gaps` regression:
@@ -946,6 +975,8 @@ impl WorkflowEngine {
             a2a_push_repo: self.a2a_push_repo.clone(),
             embed_registry: self.embed_registry.clone(),
             embed_limits: self.embed_limits.clone(),
+            artifact_store: self.artifact_store.clone(),
+            artifact_public_base: self.artifact_public_base.clone(),
         };
 
         // Box the recursive `execute` future to break the otherwise-infinite future size.

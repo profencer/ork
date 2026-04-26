@@ -1,9 +1,14 @@
+use std::fmt;
+use std::sync::Arc;
+
 use ork_a2a::{ContextId, TaskId};
 use ork_common::error::OrkError;
 use ork_common::types::{TenantId, UserId};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use url::Url;
+
+use crate::ports::artifact_store::ArtifactStore;
 
 pub type AgentId = String;
 
@@ -32,7 +37,7 @@ pub struct StepLlmOverrides {
     pub model: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AgentContext {
     pub tenant_id: TenantId,
     pub task_id: TaskId,
@@ -61,6 +66,36 @@ pub struct AgentContext {
     /// delegated child task runs its own step (or none, for ad-hoc
     /// peer calls) and re-resolves its overrides from scratch.
     pub step_llm_overrides: Option<StepLlmOverrides>,
+    /// ADR-0016: shared blob store for tool spillover and artifact tools.
+    pub artifact_store: Option<Arc<dyn ArtifactStore>>,
+    /// Public API origin for proxy URLs when `presign_get` is unavailable (same as
+    /// [`crate::embeds::EmbedContext::artifact_public_base`]).
+    pub artifact_public_base: Option<String>,
+}
+
+impl fmt::Debug for AgentContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AgentContext")
+            .field("tenant_id", &self.tenant_id)
+            .field("task_id", &self.task_id)
+            .field("parent_task_id", &self.parent_task_id)
+            .field("cancel", &self.cancel)
+            .field("caller", &self.caller)
+            .field("push_notification_url", &self.push_notification_url)
+            .field("trace_ctx", &self.trace_ctx)
+            .field("context_id", &self.context_id)
+            .field("workflow_input", &self.workflow_input)
+            .field("iteration", &self.iteration)
+            .field("delegation_depth", &self.delegation_depth)
+            .field("delegation_chain", &self.delegation_chain)
+            .field("step_llm_overrides", &self.step_llm_overrides)
+            .field(
+                "artifact_store",
+                &self.artifact_store.as_ref().map(|_| "<set>"),
+            )
+            .field("artifact_public_base", &self.artifact_public_base)
+            .finish()
+    }
 }
 
 impl AgentContext {
@@ -106,6 +141,8 @@ impl AgentContext {
             delegation_depth: self.delegation_depth + 1,
             delegation_chain: chain,
             step_llm_overrides: None,
+            artifact_store: self.artifact_store.clone(),
+            artifact_public_base: self.artifact_public_base.clone(),
         })
     }
 }
@@ -135,6 +172,8 @@ mod tests {
             delegation_depth: 0,
             delegation_chain: Vec::new(),
             step_llm_overrides: None,
+            artifact_store: None,
+            artifact_public_base: None,
         }
     }
 

@@ -1,0 +1,53 @@
+[package]
+name = "ork-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+aws-config = { workspace = true, optional = true }
+aws-types = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+mime_guess = { workspace = true }
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+testcontainers = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+aws-types = { workspace = true }
+tokio = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[features]
+default = ["fs", "s3"]
+fs = []
+s3 = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-smithy-types", "dep:aws-types"]
+gcs = []
+azblob = []
+s3-it = ["s3"]
+
+[[test]]
+name = "s3_minio_smoke"
+path = "tests/s3_minio_smoke.rs"
+required-features = ["s3-it"]

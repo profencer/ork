@@ -3,17 +3,21 @@
 use std::sync::Arc;
 
 use async_stream::stream;
+use bytes::Bytes;
 use futures::StreamExt;
 use ork_a2a::FileRef;
 use ork_a2a::Message;
 use tracing::warn;
+use uuid::Uuid;
 
 use crate::a2a::{AgentEvent, Part};
+use crate::artifact_spill::spill_bytes_to_file_part;
 use crate::embeds::{
     EmbedContext, EmbedLimits, EmbedOutput, EmbedPhase, EmbedRegistry, LATE_EMBED_OUTPUT_TRUNCATED,
     parser, resolve_early_counted,
 };
 use crate::ports::agent::AgentEventStream;
+use crate::ports::artifact_store::ArtifactScope;
 
 /// Wraps a [`AgentEventStream`] and expands `«type:…»` in text parts (phase [`EmbedPhase::Late`]
 /// or [`EmbedPhase::Both`]) before events reach the client.
@@ -128,12 +132,62 @@ fn part_with_metadata(part: Part, parent: &Option<ork_a2a::JsonObject>) -> Part 
     }
 }
 
-fn add_bytes(n: usize, output_bytes: &mut usize, limits: &EmbedLimits, out: &mut Vec<Part>) {
-    *output_bytes = (*output_bytes).saturating_add(n);
-    if *output_bytes > limits.max_late_embed_output_bytes {
-        warn!("late embed: max_late_embed_output_bytes exceeded; truncating");
-        *output_bytes = limits.max_late_embed_output_bytes;
+/// Emit `chunk` as late output. Returns `true` when the budget is exhausted and draining should
+/// stop (caller restores `work` into `buf` when applicable).
+async fn try_emit_late_text_chunk(
+    chunk: &str,
+    output_bytes: &mut usize,
+    limits: &EmbedLimits,
+    base_ctx: &EmbedContext,
+    out: &mut Vec<Part>,
+) -> bool {
+    if chunk.is_empty() {
+        return false;
+    }
+    let max = limits.max_late_embed_output_bytes;
+    if *output_bytes + chunk.len() <= max {
+        *output_bytes += chunk.len();
+        out.push(Part::text(chunk.to_string()));
+        return false;
+    }
+    let Some(store) = base_ctx.artifact_store.as_ref() else {
+        warn!("late embed: over budget, no artifact store; using truncation marker");
+        *output_bytes = max;
         out.push(Part::text(LATE_EMBED_OUTPUT_TRUNCATED));
+        return true;
+    };
+    let scope = ArtifactScope {
+        tenant_id: base_ctx.tenant_id,
+        context_id: base_ctx.context_id,
+    };
+    let name = format!("late_embed/{}", Uuid::new_v4());
+    let bytes = Bytes::copy_from_slice(chunk.as_bytes());
+    match spill_bytes_to_file_part(
+        store,
+        base_ctx.artifact_public_base.as_deref(),
+        &scope,
+        &name,
+        bytes,
+        Some("text/plain; charset=utf-8".into()),
+        base_ctx.task_id,
+    )
+    .await
+    {
+        Ok(part) => {
+            let n = part_byte_len(&part);
+            *output_bytes = (*output_bytes).saturating_add(n);
+            if *output_bytes > max {
+                *output_bytes = max;
+            }
+            out.push(part);
+            false
+        }
+        Err(e) => {
+            warn!(error = %e, "late embed: artifact spill failed; using truncation marker");
+            *output_bytes = max;
+            out.push(Part::text(LATE_EMBED_OUTPUT_TRUNCATED));
+            true
+        }
     }
 }
 
@@ -165,44 +219,36 @@ async fn drain_late_buffer(
     while let Some((s, e)) = parser::find_first_embed_span(&work) {
         if s > 0 {
             let prefix = work[..s].to_string();
-            add_bytes(prefix.len(), output_bytes, limits, &mut out);
-            if *output_bytes > limits.max_late_embed_output_bytes {
+            if try_emit_late_text_chunk(&prefix, output_bytes, limits, base_ctx, &mut out).await {
                 *buf = work;
                 return out;
             }
-            out.push(Part::text(prefix));
         }
         let span = work[s..e].to_string();
         work = work[e..].to_string();
 
         let body = &span[parser::OPEN.len()..span.len() - parser::CLOSE.len()];
         let Some(parsed) = parser::parse_embed_body(body) else {
-            add_bytes(span.len(), output_bytes, limits, &mut out);
-            if *output_bytes > limits.max_late_embed_output_bytes {
+            if try_emit_late_text_chunk(&span, output_bytes, limits, base_ctx, &mut out).await {
                 *buf = work;
                 return out;
             }
-            out.push(Part::text(span));
             continue;
         };
 
         let Some(h) = registry.get(&parsed.type_id) else {
             warn!(embed_type = %parsed.type_id, "late embed: unknown type; keeping literal");
-            add_bytes(span.len(), output_bytes, limits, &mut out);
-            if *output_bytes > limits.max_late_embed_output_bytes {
+            if try_emit_late_text_chunk(&span, output_bytes, limits, base_ctx, &mut out).await {
                 *buf = work;
                 return out;
             }
-            out.push(Part::text(span));
             continue;
         };
         if matches!(h.phase(), EmbedPhase::Early) {
-            add_bytes(span.len(), output_bytes, limits, &mut out);
-            if *output_bytes > limits.max_late_embed_output_bytes {
+            if try_emit_late_text_chunk(&span, output_bytes, limits, base_ctx, &mut out).await {
                 *buf = work;
                 return out;
             }
-            out.push(Part::text(span));
             continue;
         }
 
@@ -256,24 +302,35 @@ async fn drain_late_buffer(
             }
         };
 
+        let max = limits.max_late_embed_output_bytes;
         match res {
             EmbedOutput::Text(t) => {
-                add_bytes(t.len(), output_bytes, limits, &mut out);
-                if *output_bytes > limits.max_late_embed_output_bytes {
+                if try_emit_late_text_chunk(&t, output_bytes, limits, base_ctx, &mut out).await {
                     *buf = work;
                     return out;
                 }
-                out.push(Part::text(t));
             }
             EmbedOutput::Parts(ps) => {
                 for p in ps {
                     let n = part_byte_len(&p);
-                    add_bytes(n, output_bytes, limits, &mut out);
-                    if *output_bytes > limits.max_late_embed_output_bytes {
+                    if *output_bytes + n <= max {
+                        *output_bytes += n;
+                        out.push(p);
+                        continue;
+                    }
+                    if let Part::Text { text, .. } = &p {
+                        if try_emit_late_text_chunk(text, output_bytes, limits, base_ctx, &mut out)
+                            .await
+                        {
+                            *buf = work;
+                            return out;
+                        }
+                    } else {
+                        *output_bytes = max;
+                        out.push(Part::text(LATE_EMBED_OUTPUT_TRUNCATED));
                         *buf = work;
                         return out;
                     }
-                    out.push(p);
                 }
             }
         }
@@ -286,24 +343,20 @@ async fn drain_late_buffer(
     }
     if work.contains(parser::OPEN) && parser::find_first_embed_span(&work).is_none() {
         if work.len() > limits.max_late_embed_buffer_bytes {
-            add_bytes(work.len(), output_bytes, limits, &mut out);
-            if *output_bytes > limits.max_late_embed_output_bytes {
+            if try_emit_late_text_chunk(&work, output_bytes, limits, base_ctx, &mut out).await {
                 *buf = String::new();
                 return out;
             }
-            out.push(Part::text(work));
             *buf = String::new();
             return out;
         }
         *buf = work;
         return out;
     }
-    add_bytes(work.len(), output_bytes, limits, &mut out);
-    if *output_bytes > limits.max_late_embed_output_bytes {
+    if try_emit_late_text_chunk(&work, output_bytes, limits, base_ctx, &mut out).await {
         *buf = String::new();
         return out;
     }
-    out.push(Part::text(work));
     *buf = String::new();
     out
 }

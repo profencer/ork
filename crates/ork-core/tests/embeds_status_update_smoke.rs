@@ -91,16 +91,17 @@ async fn summary_state_json() {
     let tid = TaskId::new();
     let tenant = TenantId(Uuid::new_v4());
     let repo: Arc<dyn A2aTaskRepository> = Arc::new(MemRepo::new(tenant, tid));
-    let ctx = EmbedContext {
-        tenant_id: tenant,
-        task_id: Some(tid),
-        a2a_repo: Some(repo),
-        now: Utc::now(),
-        variables: HashMap::new(),
-        depth: 0,
-    };
-    let reg = EmbedRegistry::with_builtins();
     let lim = EmbedLimits::default();
+    let ctx = EmbedContext::with_limits(
+        tenant,
+        None,
+        Some(tid),
+        Some(repo),
+        Utc::now(),
+        HashMap::new(),
+        &lim,
+    );
+    let reg = EmbedRegistry::with_builtins();
     let id = tid.to_string();
     let s = resolve_early(
         &format!("«status_update:{id} | state» «status_update:{id} | json»"),
