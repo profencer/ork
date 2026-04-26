@@ -14,48 +14,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use jsonwebtoken::{DecodingKey, Validation, decode};
+use ork_common::auth::{ADMIN_IMPERSONATION_SCOPE, IMPERSONATION_HEADER, JwtClaims};
 use ork_common::types::TenantId;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// JWT claims accepted by the gateway. `scopes` is `default`-ed so older tokens
-/// without the field continue to deserialize (they end up with no scopes).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Claims {
-    pub sub: String,
-    pub tenant_id: String,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-    pub exp: usize,
-}
-
-/// Per-request principal made available to handlers via `Extension<AuthContext>`.
-///
-/// `tenant_id` is the **effective** tenant: it's the JWT's claim by default, but
-/// can be overridden by an `X-Tenant-Id` header when the caller carries the
-/// `tenant:admin` scope (ADR-0008 admin impersonation).
-#[derive(Debug, Clone)]
-pub struct AuthContext {
-    pub tenant_id: TenantId,
-    pub user_id: String,
-    pub scopes: Vec<String>,
-}
-
-impl AuthContext {
-    /// `true` if `scope` is in this caller's scope set.
-    #[must_use]
-    pub fn has_scope(&self, scope: &str) -> bool {
-        self.scopes.iter().any(|s| s == scope)
-    }
-}
-
-/// Scope that authorises `X-Tenant-Id` impersonation. ADR-0008 §`Auth`.
-const ADMIN_IMPERSONATION_SCOPE: &str = "tenant:admin";
-
-/// Header that carries the impersonation target. Matches the value the discovery
-/// stack already uses for tenant routing (`crates/ork-api/src/main.rs` builds
-/// agent cards with this header name as the `tenant_required` extension target).
-const IMPERSONATION_HEADER: &str = "X-Tenant-Id";
+pub use ork_common::auth::AuthContext;
 
 pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
     let jwt_secret =
@@ -81,7 +44,7 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
     let key = DecodingKey::from_secret(jwt_secret.as_bytes());
     let validation = Validation::default();
 
-    let claims = match decode::<Claims>(token, &key, &validation) {
+    let claims = match decode::<JwtClaims>(token, &key, &validation) {
         Ok(data) => data.claims,
         Err(e) => {
             return (

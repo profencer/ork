@@ -8,6 +8,7 @@ use ork_core::ports::a2a_task_repo::A2aTaskRepository;
 use ork_core::ports::artifact_meta_repo::ArtifactMetaRepo;
 use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::remote_agent_builder::RemoteAgentBuilder;
+use ork_core::ports::webui_store::WebuiStore;
 use ork_core::services::tenant::TenantService;
 use ork_core::services::workflow::WorkflowService;
 use ork_core::workflow::engine::WorkflowEngine;
@@ -58,4 +59,6 @@ pub struct AppState {
     pub artifact_meta: Option<Arc<dyn ArtifactMetaRepo>>,
     /// e.g. `https://api.example` — no path; used for public [`FileRef::Uri`].
     pub artifact_public_base: String,
+    /// ADR-0017: Web UI projects / conversations in Postgres.
+    pub webui_store: Arc<dyn WebuiStore>,
 }

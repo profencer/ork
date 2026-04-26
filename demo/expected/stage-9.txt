@@ -1,0 +1,29 @@
+== Stage 9 — LangGraph bidirectional A2A peer (ADR 0007 + 0008) ==
+
+# Anchor lines for CI / humans (trimmed; real runs include JSON and log tails).
+
+langgraph card:
+  "name": "LangGraph Research Peer (ork demo)",
+
+"skills": [
+  "research"
+]
+
+# Registry check (ork lists the remote from [[remote_agents]]):
+#   "name": "LangGraph Research Peer (ork demo)"   (or similar, case-insensitive match)
+
+# Workflow:
+POST /api/workflows  (langgraph-demo)
+
+# Terminal run (success path):
+"via_langgraph"
+completed
+
+# In langgraph log — proof of tool use (researcher is called back into ork):
+# ask_ork
+# researcher
+
+# Optional: in ork-api.log, requests hit /a2a/agents/researcher (reverse leg).
+
+Stage 9 done
+next: make -C demo demo-stage-8  (or full teardown)

@@ -4,6 +4,7 @@ pub mod a2a_signing_key_repo;
 pub mod a2a_task_repo;
 pub mod artifact_meta_repo;
 pub mod tenant_repo;
+pub mod webui_store;
 pub mod workflow_repo;
 
 use sqlx::PgPool;

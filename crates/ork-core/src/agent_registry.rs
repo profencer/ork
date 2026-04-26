@@ -252,6 +252,23 @@ impl AgentRegistry {
         out
     }
 
+    /// Every known agent with its registry id (A2A URL segment for `POST /a2a/agents/{id}`).
+    ///
+    /// [`AgentCard::name`] is a human display label and may differ in casing from the id
+    /// (e.g. id `researcher`, name `Researcher`). UIs must use the id for dispatch.
+    pub async fn list_id_cards(&self) -> Vec<(AgentId, AgentCard)> {
+        let mut out: Vec<_> = self
+            .local
+            .iter()
+            .map(|(id, a)| (id.clone(), a.card().clone()))
+            .collect();
+        let guard = self.remote.read().await;
+        for (id, e) in guard.iter() {
+            out.push((id.clone(), e.card.clone()));
+        }
+        out
+    }
+
     /// Lookup a card by id, preferring local. Returns `None` if neither local nor remote
     /// knows the id.
     pub async fn card_for(&self, id: &AgentId) -> Option<AgentCard> {
@@ -616,6 +633,19 @@ mod tests {
         let mut names: Vec<String> = reg.list_cards().await.into_iter().map(|c| c.name).collect();
         names.sort();
         assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn list_id_cards_keeps_registry_id_separate_from_card_name() {
+        let reg = AgentRegistry::new();
+        let mut card = sample_card("Display Name", None, Some("https://example.com/z"));
+        card.name = "Human Label".into();
+        reg.upsert_remote("machine_id".into(), entry_for(&card))
+            .await;
+        let pairs = reg.list_id_cards().await;
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "machine_id");
+        assert_eq!(pairs[0].1.name, "Human Label");
     }
 
     use crate::a2a::{AgentContext, AgentMessage};

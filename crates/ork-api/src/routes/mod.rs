@@ -14,11 +14,17 @@ use crate::middleware::auth_middleware;
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
-    create_router_with_gateways(state, Router::new())
+    create_router_with_gateways(state, Router::new(), Router::new())
 }
 
-/// Same as [`create_router`], but merges `gateway_routes` on the public side (each gateway terminates its own auth).
-pub fn create_router_with_gateways(state: AppState, gateway_routes: Router) -> Router {
+/// Same as [`create_router`], but merges gateway routes: `gateway_routes` on the public
+/// side (each gateway may terminate its own auth), `gateway_protected` with [`auth_middleware`]
+/// (ADR-0017 Web UI).
+pub fn create_router_with_gateways(
+    state: AppState,
+    gateway_routes: Router,
+    gateway_protected: Router,
+) -> Router {
     let public_routes = Router::new()
         .merge(health::routes())
         .merge(webhooks::routes(state.clone()))
@@ -32,6 +38,7 @@ pub fn create_router_with_gateways(state: AppState, gateway_routes: Router) -> R
         .merge(artifacts::routes(state.clone()))
         .merge(tenants::routes(state.clone()))
         .merge(workflows::routes(state.clone()))
+        .merge(gateway_protected)
         // ADR-0008: A2A JSON-RPC dispatcher, SSE bridge, and convenience
         // endpoints all live behind the same auth middleware.
         .merge(a2a::protected_routes(state.clone()))

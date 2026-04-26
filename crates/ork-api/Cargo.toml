@@ -25,6 +25,7 @@ ork-mcp = { workspace = true }
 ork-persistence = { workspace = true }
 ork-storage = { workspace = true }
 ork-gateways = { workspace = true }
+ork-webui = { workspace = true }
 ork-push = { workspace = true }
 ork-cache = { workspace = true }
 redis = { workspace = true }
@@ -51,6 +52,7 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 
 [dev-dependencies]
+ork-webui = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"

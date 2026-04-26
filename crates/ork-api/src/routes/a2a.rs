@@ -231,7 +231,7 @@ async fn handle_message_send(
         None => {
             return Json(JsonRpcResponse::<serde_json::Value>::err(
                 env.id,
-                JsonRpcError::method_not_found(agent_id),
+                JsonRpcError::agent_not_found(agent_id),
             ))
             .into_response();
         }
@@ -402,7 +402,7 @@ async fn handle_message_stream(
         None => {
             return Json(JsonRpcResponse::<serde_json::Value>::err(
                 env.id,
-                JsonRpcError::method_not_found(agent_id),
+                JsonRpcError::agent_not_found(agent_id),
             ))
             .into_response();
         }

@@ -115,6 +115,18 @@ impl JsonRpcError {
         }
     }
 
+    /// Unknown agent on `POST /a2a/agents/{agent_id}` (id must match the registry, not `AgentCard::name`).
+    #[must_use]
+    pub fn agent_not_found(agent_id: &str) -> Self {
+        Self {
+            code: Self::METHOD_NOT_FOUND,
+            message: format!(
+                "Agent not found: {agent_id} (use the agent id from GET /a2a/agents, not the display name)"
+            ),
+            data: None,
+        }
+    }
+
     /// Referenced task id does not exist.
     #[must_use]
     pub fn task_not_found(id: &TaskId) -> Self {

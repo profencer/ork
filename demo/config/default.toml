@@ -63,7 +63,9 @@ namespace = "ork.a2a.v1"
 # the federation stage (stage 6) sees the peer card almost immediately.
 [a2a_client]
 request_timeout_secs = 10
-stream_idle_timeout_secs = 60
+# Remote peers (e.g. LangGraph ReAct) can go quiet for minutes between SSE events
+# while the LLM and nested A2A calls run; 60s is too tight for the stage-9 demo.
+stream_idle_timeout_secs = 300
 card_refresh_interval_secs = 60
 
 # Discovery: publish own cards every 10s so stage 2's `GET /a2a/agents` shows
@@ -91,6 +93,15 @@ default_branch = "main"
 [[remote_agents]]
 id = "vendor-planner"
 card_url = "http://127.0.0.1:8090/.well-known/agent-card.json"
+[remote_agents.auth]
+kind = "none"
+
+# ADR-0007 — LangGraph Python peer on :8092 (stage 9). `boot_langgraph_agent` in stage 0
+# must have published the card before ork starts (same static-loader constraint as
+# vendor-planner).
+[[remote_agents]]
+id = "langgraph-researcher"
+card_url = "http://127.0.0.1:8092/.well-known/agent-card.json"
 [remote_agents.auth]
 kind = "none"
 
@@ -156,6 +167,18 @@ default_agent = "planner"
 mode = "agent"
 allow_unsigned = true
 # No secret: demo only. Production should set secret_env + HMAC.
+
+# ADR-0017 — Web UI: `/webui/api/*` behind JWT, `GET /` proxied to Vite when
+# `WEBUI_DEV_PROXY` is set (see `stage-0-bootstrap.sh`). `a2a_public_base` must
+# match the demo API so `message/stream` proxy hits the same ork process.
+[[gateways]]
+id = "demo-webui"
+type = "webui"
+enabled = true
+[gateways.config]
+a2a_public_base = "http://127.0.0.1:8080"
+public_base_url = "http://127.0.0.1:8080"
+display_name = "ork Web UI (demo)"
 
 # ADR-0016 — local artifact store (relative paths resolve from CWD: stage 0 runs
 # ork-api with `cd demo/`, so `data/artifacts` is demo/data/artifacts).

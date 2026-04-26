@@ -533,6 +533,8 @@ pub async fn test_state_with_agents(agent_ids: &[&str]) -> TestState {
         artifact_store: None,
         artifact_meta: None,
         artifact_public_base: "http://127.0.0.1:0".into(),
+        webui_store: Arc::new(ork_webui::in_memory_store::InMemoryWebuiStore::new())
+            as Arc<dyn ork_core::ports::webui_store::WebuiStore>,
     };
 
     TestState {

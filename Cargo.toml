@@ -16,10 +16,12 @@ members = [
     "crates/ork-common",
     "crates/ork-push",
     "crates/ork-storage",
+    "crates/ork-webui",
 ]
 exclude = [
     "demo/peer-agent",
     "demo/webhook-receiver",
+    "demo/langgraph-agent",
 ]
 
 [workspace.package]
@@ -45,6 +47,7 @@ ork-persistence = { path = "crates/ork-persistence" }
 ork-common = { path = "crates/ork-common" }
 ork-push = { path = "crates/ork-push" }
 ork-storage = { path = "crates/ork-storage" }
+ork-webui = { path = "crates/ork-webui" }
 
 # Web framework
 axum = "0.8"
@@ -113,6 +116,9 @@ aws-smithy-types = { version = "1" }
 aws-types = { version = "1" }
 mime_guess = "2"
 tempfile = "3"
+
+# Web UI (ADR-0017): static SPA embed in ork-webui (`embed-spa` feature)
+include_dir = "0.7"
 
 # A2A remote agent (ADR 0007)
 eventsource-stream = "0.2"

@@ -14,9 +14,11 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 
-/// Built gateway instances plus merged public HTTP routes (each gateway may contribute `Router<()>`).
+/// Built gateway instances plus merged public and protected HTTP routes.
 pub struct GatewayBoot {
     pub router: Router,
+    /// Merged with other JWT-protected routes (ADR-0017 Web UI).
+    pub protected_router: Router,
     pub gateways: Vec<Arc<dyn Gateway>>,
 }
 
@@ -48,9 +50,15 @@ pub async fn build_and_start_gateways(
         tenant_service: state.tenant_service.clone(),
         workflow_service: state.workflow_service.clone(),
         engine: state.engine.clone(),
+        webui_store: Some(state.webui_store.clone()),
     };
-    let registry = ork_gateways::registry::GatewayRegistry::with_builtins();
-    let ork_gateways::GatewaysBuild { router, instances } = registry
+    let mut registry = ork_gateways::registry::GatewayRegistry::with_builtins();
+    registry.add_factory("webui", std::sync::Arc::new(ork_webui::WebUiGatewayFactory));
+    let ork_gateways::GatewaysBuild {
+        router,
+        protected_router,
+        instances,
+    } = registry
         .build_from_config(&state.config.gateways, &bootstrap)
         .await?;
 
@@ -82,5 +90,9 @@ pub async fn build_and_start_gateways(
         });
     }
 
-    Ok(GatewayBoot { router, gateways })
+    Ok(GatewayBoot {
+        router,
+        protected_router,
+        gateways,
+    })
 }

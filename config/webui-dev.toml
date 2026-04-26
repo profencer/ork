@@ -1,0 +1,9 @@
+# Optional overlay: merged when `ORK_CONFIG_EXTRA` is set to this file (see `ork webui dev`, ADR-0017).
+# Adds the Web UI gateway + A2A self-callback base on the same host/port as `[server]`.
+
+[[gateways]]
+id = "dev-webui"
+type = "webui"
+
+[gateways.config]
+a2a_public_base = "http://127.0.0.1:8080"

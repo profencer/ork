@@ -1,0 +1,14 @@
+{
+  "name": "langgraph-demo",
+  "version": "1.0",
+  "trigger": { "type": "manual" },
+  "steps": [
+    {
+      "id": "via_langgraph",
+      "agent": "langgraph-researcher",
+      "tools": [],
+      "prompt_template": "Task: {{input.task}}\n\nInstructions: You are the LangGraph demo peer. Use the ask_ork tool with agent_id \"researcher\" to look up facts in the anthropic-sdk-typescript repo (see demo config repositories). Summarise findings in one paragraph.\n",
+      "depends_on": []
+    }
+  ]
+}

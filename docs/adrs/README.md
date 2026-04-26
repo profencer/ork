@@ -115,7 +115,7 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0014](0014-plugin-system.md) | Plugin system | Superseded by [0024](0024-wasm-plugin-system.md) | 3 |
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Implemented | 3 |
 | [0016](0016-artifact-storage.md) | Artifact / file-management service | Accepted | 3 |
-| [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Proposed | 4 |
+| [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Accepted | 4 |
 | [0018](0018-dag-executor-enhancements.md) | Workflow DAG executor enhancements | Proposed | 4 |
 | [0019](0019-scheduled-tasks.md) | Scheduled tasks | Proposed | 4 |
 | [0020](0020-tenant-security-and-trust.md) | Tenant security and A2A trust model | Proposed | 4 |
@@ -123,6 +123,9 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0022](0022-observability.md) | Observability: tracing, monitors, task event log | Proposed | 4 |
 | [0023](0023-migration-and-rollout-plan.md) | Migration and rollout plan | Proposed | 4 |
 | [0024](0024-wasm-plugin-system.md) | WASM-based plugin system | Proposed | 3 |
+| [0025](0025-typed-output-validation-and-verifier-agent.md) | Typed-output validation and verifier-agent port | Proposed | 4 |
+| [0026](0026-workflow-topology-selection-from-task-features.md) | Workflow topology selection from task features (classifier) | Proposed | 4 |
+| [0027](0027-human-in-the-loop.md) | Human-in-the-loop: approval steps and input requests | Proposed | 4 |
 
 ## Decision graph
 
@@ -173,6 +176,22 @@ flowchart LR
   ADR0020[0020 Security] --> ADR0021
   ADR0020 --> ADR0022
   ADR0021 --> ADR0022
+  ADR0011 --> ADR0025[0025 Validation gate]
+  ADR0018 --> ADR0025
+  ADR0025 --> ADR0022
+  ADR0018 --> ADR0026[0026 Topology classifier]
+  ADR0006 --> ADR0026
+  ADR0025 --> ADR0026
+  ADR0026 --> ADR0022
+  ADR0003 --> ADR0027[0027 Human-in-the-loop]
+  ADR0008 --> ADR0027
+  ADR0009 --> ADR0027
+  ADR0017 --> ADR0027
+  ADR0018 --> ADR0027
+  ADR0019 --> ADR0027
+  ADR0021 --> ADR0027
+  ADR0025 --> ADR0027
+  ADR0027 --> ADR0022
 ```
 
 ## Mapping-to-SAM summary

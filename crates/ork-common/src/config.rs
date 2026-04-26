@@ -727,8 +727,12 @@ impl RetryPolicyToml {
 
 impl AppConfig {
     pub fn load() -> Result<Self, config::ConfigError> {
-        let cfg = config::Config::builder()
-            .add_source(config::File::with_name("config/default").required(false))
+        let mut b = config::Config::builder()
+            .add_source(config::File::with_name("config/default").required(false));
+        if let Ok(extra) = std::env::var("ORK_CONFIG_EXTRA") {
+            b = b.add_source(config::File::from(std::path::Path::new(&extra)).required(true));
+        }
+        let cfg = b
             .add_source(config::Environment::with_prefix("ORK").separator("__"))
             .build()?;
 

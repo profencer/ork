@@ -11,15 +11,16 @@ SCRIPTS := $(DEMO_DIR)/scripts
 
 .PHONY: demo-all demo-up demo-down help \
         demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 demo-stage-4a \
-        demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-8
+        demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-8 demo-stage-9
+# Note: demo-all runs 9 before 8 (LangGraph exercise before teardown).
 
 help: ## Show every demo target with its description.
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
-demo-all: demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 demo-stage-4a demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-8 ## Run every stage in order, end-to-end.
+demo-all: demo-stage-0 demo-stage-1 demo-stage-2 demo-stage-3 demo-stage-4 demo-stage-4a demo-stage-5 demo-stage-6 demo-stage-7 demo-stage-9 demo-stage-8 ## Run every stage in order, end-to-end.
 
-demo-up: demo-stage-0 ## Boot infra + ork-api so other stages can be run individually.
+demo-up: demo-stage-0 ## Boot infra + ork-api (+ Web UI Vite when pnpm present; `DEMO_WEBUI=0` to skip).
 
 demo-down: demo-stage-8 ## Tear infra + background PIDs down (alias for stage 8).
 
@@ -49,6 +50,9 @@ demo-stage-6: ## Stage 6 — Federation: ork delegates to a stub vendor agent (A
 
 demo-stage-7: ## Stage 7 — Push notifications + JWKS key rotation (ADR 0009).
 	@bash $(SCRIPTS)/stage-7-push.sh
+
+demo-stage-9: ## Stage 9 — LangGraph A2A peer (bidirectional with ork; ADR 0007).
+	@bash $(SCRIPTS)/stage-9-langgraph.sh
 
 demo-stage-8: ## Stage 8 — Teardown (kill PIDs, compose down, clean state).
 	@bash $(SCRIPTS)/stage-8-teardown.sh

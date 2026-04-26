@@ -54,10 +54,54 @@ log_info "migrations applied"
 # the peer here, before ork-api, so the boot-time loader succeeds.
 boot_peer_agent
 
+# 3.4 LangGraph A2A peer (ADR-0007) — :8092, before ork-api static remote_agent card fetch
+# (same reason as boot_peer_agent). `ask_ork` back-calls ork; creds from demo/.env at runtime
+# (DEMO_ROOT) once stage-0 has written the file.
+boot_langgraph_agent
+
+# 3.5 Web UI (ADR-0017) — optional Vite on :5173, before ork, so the API can set
+# WEBUI_DEV_PROXY.  Disable with DEMO_WEBUI=0.  Needs `pnpm` + `client/webui/frontend`.
+BASE_URL="http://127.0.0.1:8080"
+WEBUI_VITE_PORT="${WEBUI_VITE_PORT:-5173}"
+WEBUI_VITE_LOG="$LOG_DIR/webui-vite.log"
+VITE_PID_FILE="$DEMO_ROOT/.webui-vite.pid"
+DEMO_WEBUI="${DEMO_WEBUI:-1}"
+ORK_PUBLIC_EXTRAS=("ORK_A2A_PUBLIC_BASE=$BASE_URL")
+if [[ "$DEMO_WEBUI" == "0" ]]; then
+  kill_pidfile "$VITE_PID_FILE" "webui vite (DEMO_WEBUI=0)"
+fi
+if [[ "$DEMO_WEBUI" != "0" ]] && command -v pnpm >/dev/null 2>&1 && [[ -f "$REPO_ROOT/client/webui/frontend/package.json" ]]; then
+  kill_pidfile "$VITE_PID_FILE" "previous webui vite"
+  log_info "Web UI: installing client/webui/frontend (pnpm) — first run can take a minute"
+  ( cd "$REPO_ROOT/client/webui/frontend" && ( pnpm install --frozen-lockfile 2>/dev/null || pnpm install ) ) \
+    || { log_err "pnpm install failed in client/webui/frontend — set DEMO_WEBUI=0 to skip the Web UI"; exit 1; }
+  : > "$WEBUI_VITE_LOG"
+  (
+    cd "$REPO_ROOT/client/webui/frontend"
+    # `--host 127.0.0.1` so the server binds IPv4; default `localhost` can be ::1 only,
+    # which makes `http://127.0.0.1:$port/` (and ork's WEBUI_DEV_PROXY) time out.
+    nohup pnpm run dev -- --host 127.0.0.1 --port "$WEBUI_VITE_PORT" --strictPort \
+      >> "$WEBUI_VITE_LOG" 2>&1 &
+    echo "$!" > "$VITE_PID_FILE"
+  )
+  log_info "Vite for Web UI (pid $(cat "$VITE_PID_FILE"), log $WEBUI_VITE_LOG)"
+  if ! wait_for_url "http://127.0.0.1:${WEBUI_VITE_PORT}/" 60; then
+    log_err "Vite did not start — see $WEBUI_VITE_LOG"
+    tail -n 50 "$WEBUI_VITE_LOG" >&2 || true
+    exit 1
+  fi
+  ORK_PUBLIC_EXTRAS+=("WEBUI_DEV_PROXY=http://127.0.0.1:${WEBUI_VITE_PORT}")
+  log_info "Web UI: open $BASE_URL/ in a browser, paste JWT from demo/.env (same origin API)"
+else
+  if [[ "$DEMO_WEBUI" != "0" ]]; then
+    log_warn "skipping Web UI Vite (install pnpm and run from repo with client/webui/frontend, or set DEMO_WEBUI=0). /webui/api/* still works; / may 503 without WEBUI_DEV_PROXY."
+  fi
+  ORK_PUBLIC_EXTRAS=("ORK_A2A_PUBLIC_BASE=$BASE_URL")
+fi
+
 # 4. ork-api boot ---------------------------------------------------------
 PID_FILE="$DEMO_ROOT/.ork-api.pid"
 LOG_FILE="$LOG_DIR/ork-api.log"
-BASE_URL="http://127.0.0.1:8080"
 JWT_SECRET="ork-demo-secret-change-me"
 
 # Kill any prior ork-api this script started (lets you re-run stage 0 freely).
@@ -66,7 +110,10 @@ kill_pidfile "$PID_FILE" "previous ork-api"
 # If something else is already on :8080, stop here with a clear error so
 # stage 1+ don't talk to a foreign service.
 if curl -s -o /dev/null --max-time 1 "$BASE_URL/health"; then
-  log_warn "something is already responding on $BASE_URL/health — re-using it"
+  log_warn "something is already responding on $BASE_URL/health — re-using it (not starting a new ork-server)"
+  if [[ -f "$VITE_PID_FILE" ]]; then
+    log_warn "Vite is running; if $BASE_URL/ does not show the Web UI, stop whatever holds :8080 and re-run stage 0 so ork starts with WEBUI_DEV_PROXY"
+  fi
 else
   log_info "launching ork-api in the background (logs -> $LOG_FILE)"
 
@@ -100,7 +147,7 @@ else
   fi
   (
     cd "$DEMO_ROOT"
-    nohup env "${ENV_OVERRIDES[@]}" "$ORK_API_BIN" >> "$LOG_FILE" 2>&1 &
+    nohup env "${ENV_OVERRIDES[@]}" "${ORK_PUBLIC_EXTRAS[@]}" "$ORK_API_BIN" >> "$LOG_FILE" 2>&1 &
     echo "$!" > "$PID_FILE"
   )
   log_info "ork-api pid=$(cat "$PID_FILE")"
@@ -165,7 +212,15 @@ save_env_var ORK_API_LOG       "$LOG_FILE"
 
 log_info "wrote demo/.env (BASE_URL, TENANT_ID, JWT, ...)"
 
+if [[ -f "$VITE_PID_FILE" ]]; then
+  save_env_var WEBUI_VITE_PID_FILE "$VITE_PID_FILE"
+  save_env_var WEBUI_VITE_LOG      "$WEBUI_VITE_LOG"
+fi
+
 banner "Stage 0 done"
 log_info "ork-api: $BASE_URL  (logs: $LOG_FILE)"
 log_info "tenant : $TENANT_SLUG ($TENANT_ID)"
+if [[ -f "$VITE_PID_FILE" ]]; then
+  log_info "web ui : $BASE_URL/  — paste the JWT from demo/.env in the ork Web UI (ADR-0017)"
+fi
 log_info "next   : make -C demo demo-stage-1   (or just 'make demo')"

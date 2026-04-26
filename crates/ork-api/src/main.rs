@@ -503,6 +503,11 @@ async fn main() -> anyhow::Result<()> {
     // can't busy-loop the runtime; per-server failures are logged and
     // swallowed inside `refresh_all` to keep one bad vendor from
     // poisoning the rest of the cache.
+    let webui_store: std::sync::Arc<dyn ork_core::ports::webui_store::WebuiStore> =
+        std::sync::Arc::new(ork_persistence::postgres::webui_store::PgWebuiStore::new(
+            pool.clone(),
+        ));
+
     if let Some(client) = mcp_client.clone() {
         let cancel = discovery_cancel.clone();
         let interval = config.mcp.refresh_interval();
@@ -545,6 +550,7 @@ async fn main() -> anyhow::Result<()> {
         artifact_store: artifact_store.clone(),
         artifact_meta: artifact_meta.clone(),
         artifact_public_base: artifact_public_base.clone(),
+        webui_store,
     };
 
     let gateway_boot =
@@ -553,7 +559,11 @@ async fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!(e.to_string()))
             .context("configure generic gateways (ADR-0013)")?;
 
-    let app = routes::create_router_with_gateways(app_state, gateway_boot.router);
+    let app = routes::create_router_with_gateways(
+        app_state,
+        gateway_boot.router,
+        gateway_boot.protected_router,
+    );
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

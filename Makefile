@@ -3,7 +3,7 @@
 
 .PHONY: demo demo-up demo-down demo-help
 
-demo: ## Run the full 8-stage ork demo end-to-end.
+demo: ## Run the full demo (stages 0–7, 9, 8) end-to-end.
 	@$(MAKE) -C demo demo-all
 
 demo-up: ## Boot the demo infra (compose + ork-api + helpers) without running stages.

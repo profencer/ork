@@ -3,3 +3,4 @@ adr,title,proposed_at,impl_started_at,impl_done_at,reviewer_findings,reroll_coun
 0013,generic-gateway-abstraction,2026-04-24,2026-04-25,2026-04-25,3,0,"gateways: shutdown order + pipeline warn logging + discovery after start; hex boundaries preserved in ork-gateways"
 0015,dynamic-embeds,2026-04-24,2026-04-26,2026-04-26,2,0,"evalexpr math; ork-core embeds+late_embed; ork-api SSE wrap; artifact/secret handlers deferred to ADR-0016/0020/0024"
 0016,artifact-storage,2026-04-24,2026-04-24,2026-04-26,3,0,"S3 list pagination; GatewayDeps artifact_store/Public base wired through gateways; per-tenant retention in eligible_for_sweep"
+0017,webui-chat-client,2026-04-24,2026-04-24,2026-04-26,4,0,"code-reviewer: webui dev wiring + HMR limit + chat textarea + Vite wait; ORK_CONFIG_EXTRA merge; follow-up: WS proxy for HMR"

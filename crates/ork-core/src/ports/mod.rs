@@ -11,4 +11,6 @@ pub mod integration;
 pub mod llm;
 pub mod remote_agent_builder;
 pub mod repository;
+pub mod webui_project_repo;
+pub mod webui_store;
 pub mod workspace;

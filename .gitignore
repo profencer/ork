@@ -1,6 +1,12 @@
 /target
+/client/webui/frontend/node_modules/
+/client/webui/frontend/dist/
 .env
 *.swp
 *.swo
 *~
 .DS_Store
+demo/langgraph-agent/.venv/
+demo/langgraph-agent/**/__pycache__/
+demo/langgraph-agent/**/.ruff_cache/
+demo/langgraph-agent/src/**/*.egg-info/

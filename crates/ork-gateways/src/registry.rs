@@ -16,14 +16,21 @@ use crate::rest;
 use crate::webhook;
 
 /// One loaded gateway: HTTP routes (may be empty) plus the [`Gateway`] handle for discovery and lifecycle.
+///
+/// `router` is merged with **public** `ork-api` routes (no bearer middleware).
+/// `protected_router` is merged with **protected** routes and uses the same
+/// `auth_middleware` as the A2A API (ADR-0017 Web UI).
 pub struct GatewayInstance {
     pub gateway: Arc<dyn Gateway>,
     pub router: Router,
+    /// Mount with other protected APIs, behind the same JWT middleware as A2A.
+    pub protected_router: Router,
 }
 
-/// All gateways from a config slice with merged public HTTP routes (`Router<()>`).
+/// All gateways from a config slice with merged public and protected HTTP routes (`Router<()>`).
 pub struct GatewaysBuild {
     pub router: Router,
+    pub protected_router: Router,
     pub instances: Vec<GatewayInstance>,
 }
 
@@ -46,7 +53,11 @@ impl GatewayFactory for RestFactory {
         deps: &GatewayBootstrapDeps,
     ) -> Result<GatewayInstance, OrkError> {
         let (router, gateway) = rest::build(&cfg.id, &cfg.config, deps)?;
-        Ok(GatewayInstance { gateway, router })
+        Ok(GatewayInstance {
+            gateway,
+            router,
+            protected_router: Router::new(),
+        })
     }
 }
 
@@ -60,7 +71,11 @@ impl GatewayFactory for WebhookFactory {
         deps: &GatewayBootstrapDeps,
     ) -> Result<GatewayInstance, OrkError> {
         let (router, gateway) = webhook::build(&cfg.id, &cfg.config, deps)?;
-        Ok(GatewayInstance { gateway, router })
+        Ok(GatewayInstance {
+            gateway,
+            router,
+            protected_router: Router::new(),
+        })
     }
 }
 
@@ -78,6 +93,7 @@ impl GatewayFactory for EventMeshFactory {
         Ok(GatewayInstance {
             gateway,
             router: Router::new(),
+            protected_router: Router::new(),
         })
     }
 }
@@ -92,7 +108,11 @@ impl GatewayFactory for McpFactory {
         deps: &GatewayBootstrapDeps,
     ) -> Result<GatewayInstance, OrkError> {
         let (router, gateway) = mcp_gw::build(&cfg.id, &cfg.config, deps)?;
-        Ok(GatewayInstance { gateway, router })
+        Ok(GatewayInstance {
+            gateway,
+            router,
+            protected_router: Router::new(),
+        })
     }
 }
 
@@ -113,6 +133,12 @@ impl GatewayRegistry {
         Self { factories }
     }
 
+    /// Adds an optional gateway implementation (e.g. ADR-0017 `webui` from the `ork-webui` crate)
+    /// so `ork-gateways` does not take a direct dependency on that crate.
+    pub fn add_factory(&mut self, name: &str, factory: Arc<dyn GatewayFactory>) {
+        self.factories.insert(name.to_lowercase(), factory);
+    }
+
     /// Number of built-in gateway kinds (for tests / diagnostics).
     #[must_use]
     pub fn builtin_kind_count(&self) -> usize {
@@ -126,6 +152,7 @@ impl GatewayRegistry {
         deps: &GatewayBootstrapDeps,
     ) -> Result<GatewaysBuild, OrkError> {
         let mut router = Router::new();
+        let mut protected_router = Router::new();
         let mut instances = Vec::new();
         for cfg in configs {
             if !cfg.enabled {
@@ -140,9 +167,14 @@ impl GatewayRegistry {
             })?;
             let inst = factory.build_instance(cfg, deps).await?;
             router = router.merge(inst.router.clone());
+            protected_router = protected_router.merge(inst.protected_router.clone());
             instances.push(inst);
         }
-        Ok(GatewaysBuild { router, instances })
+        Ok(GatewaysBuild {
+            router,
+            protected_router,
+            instances,
+        })
     }
 }
 

@@ -1,0 +1,37 @@
+[package]
+name = "ork-webui"
+version.workspace = true
+edition.workspace = true
+
+# Default: no `client/webui/frontend/dist` at compile time (CI / Rust-only).
+# `embed-spa` includes the Vite `dist/` tree via `include_dir!` for a self-contained `ork-server`.
+[features]
+default = []
+embed-spa = ["dep:include_dir"]
+
+[dependencies]
+include_dir = { workspace = true, optional = true }
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+ork-gateways = { workspace = true }
+axum = { workspace = true, features = ["multipart"] }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+mime_guess = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+url = { workspace = true, features = ["serde"] }
+urlencoding = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+uuid = { workspace = true }
+ork-core = { workspace = true }

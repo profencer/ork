@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ork_core::ports::gateway::GatewayDeps;
+use ork_core::ports::webui_store::WebuiStore;
 use ork_core::services::tenant::TenantService;
 use ork_core::services::workflow::WorkflowService;
 use ork_core::workflow::engine::WorkflowEngine;
@@ -20,4 +21,6 @@ pub struct GatewayBootstrapDeps {
     pub tenant_service: Arc<TenantService>,
     pub workflow_service: Arc<WorkflowService>,
     pub engine: Arc<WorkflowEngine>,
+    /// Set by `ork-api` when the DB is available; the webui factory falls back to in-memory.
+    pub webui_store: Option<Arc<dyn WebuiStore>>,
 }

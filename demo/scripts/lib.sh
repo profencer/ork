@@ -194,6 +194,85 @@ boot_peer_agent() {
   fi
 }
 
+# LangGraph A2A peer on $LG_ADDR (default 127.0.0.1:8092). Sets
+# LG_ADDR / LG_CARD_URL / LG_LOG / LG_PID_FILE; idempotent; may set LG_SKIPPED=1.
+boot_langgraph_agent() {
+  LG_SKIPPED=0
+  LG_ADDR="${LG_ADDR:-127.0.0.1:8092}"
+  LG_CARD_URL="http://${LG_ADDR}/.well-known/agent-card.json"
+  LG_LOG="$LOG_DIR/langgraph-agent.log"
+  LG_PID_FILE="$DEMO_ROOT/.langgraph-agent.pid"
+  local lg_dir="$DEMO_ROOT/langgraph-agent"
+
+  if curl -s -o /dev/null --max-time 1 "$LG_CARD_URL"; then
+    log_info "langgraph-agent already responding on $LG_ADDR — re-using it"
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    log_warn "skipping langgraph-agent (python3 not found) — stage 9 will no-op"
+    LG_SKIPPED=1
+    return 0
+  fi
+  if ! python3 -c 'import sys; assert sys.version_info >= (3, 12)' >/dev/null 2>&1; then
+    log_warn "skipping langgraph-agent (need Python >= 3.12) — stage 9 will no-op"
+    LG_SKIPPED=1
+    return 0
+  fi
+
+  kill_pidfile "$LG_PID_FILE" "previous langgraph-agent"
+
+  local py="python3"
+  local run_m="demo_langgraph_agent"
+  # editable install into .venv (first run runs pip)
+  if [[ -x "$lg_dir/.venv/bin/python" ]]; then
+    py="$lg_dir/.venv/bin/python"
+  else
+    log_info "creating demo/langgraph-agent/.venv and pip install -e (one-time)"
+    ( cd "$lg_dir" && python3 -m venv .venv && .venv/bin/pip install -q -U pip && .venv/bin/pip install -q -e ".[dev]" ) \
+      || { log_warn "langgraph-agent venv install failed — skipping (network or deps); stage 9 will no-op"; LG_SKIPPED=1; return 0; }
+    py="$lg_dir/.venv/bin/python"
+  fi
+
+  # Minimax: ChatOpenAI wants bare key; demo MINIMAX_API_KEY is often "Bearer sk-…"
+  local oai_key oai_url
+  oai_url="${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+  oai_key="${OPENAI_API_KEY:-}"
+  if [[ -z "$oai_key" && -n "${MINIMAX_API_KEY:-}" ]]; then
+    t="${MINIMAX_API_KEY#Bearer}"
+    t="${t# }"
+    oai_key="${t//[[:space:]]/}"
+  fi
+
+  : > "$LG_LOG"
+  (
+    cd "$lg_dir"
+    nohup env \
+      "DEMO_ROOT=$DEMO_ROOT" \
+      "RUST_LOG=info" \
+      "LOG_LEVEL=INFO" \
+      "ORK_BASE_URL=${ORK_BASE_URL:-${BASE_URL:-http://127.0.0.1:8080}}" \
+      "ORK_JWT=${ORK_JWT:-${JWT:-}}" \
+      "ORK_TENANT_ID=${ORK_TENANT_ID:-${TENANT_ID:-}}" \
+      "MINIMAX_API_KEY=${MINIMAX_API_KEY:-}" \
+      "OPENAI_BASE_URL=$oai_url" \
+      "OPENAI_API_KEY=$oai_key" \
+      "OPENAI_MODEL=${OPENAI_MODEL:-MiniMax-M2.7}" \
+      "$py" -m "$run_m" --addr "$LG_ADDR" \
+      >> "$LG_LOG" 2>&1 &
+    echo "$!" > "$LG_PID_FILE"
+  )
+  log_info "langgraph-agent pid=$(cat "$LG_PID_FILE") (logs -> $LG_LOG)"
+
+  if ! wait_for_url "$LG_CARD_URL" 60; then
+    log_warn "langgraph-agent never published its card — skipping. Tail of $LG_LOG:"
+    tail -n 20 "$LG_LOG" >&2 || true
+    kill_pidfile "$LG_PID_FILE" "failed langgraph-agent"
+    LG_SKIPPED=1
+    return 0
+  fi
+}
+
 # Convert a YAML file to JSON via the best available tool, in order:
 #   1. mikefarah's `yq` (the Go one) or kislyuk/yq (the Python wrapper).
 #   2. `python3` + PyYAML.

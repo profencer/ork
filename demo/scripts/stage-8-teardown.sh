@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stage 8 — Teardown.
 #
-# Idempotent cleanup: kill the three background binaries the demo started
-# (ork-api, peer-agent, webhook-receiver), drop the docker compose stack
+# Idempotent cleanup: kill the background processes the demo started
+# (ork-api, peer-agent, langgraph-agent, webhook-receiver), drop the docker compose stack
 # (postgres + redis) including its named volume, and remove the per-run
 # state under demo/ (.env, logs/, data/, .last-hooks.json, ad-hoc PID
 # files). Safe to run mid-demo or twice in a row.
@@ -20,7 +20,9 @@ require_cmd docker
 # 1. Kill background binaries --------------------------------------------
 kill_pidfile "$DEMO_ROOT/.ork-api.pid"          "ork-api"
 kill_pidfile "$DEMO_ROOT/.peer-agent.pid"        "peer-agent"
+kill_pidfile "$DEMO_ROOT/.langgraph-agent.pid"    "langgraph-agent"
 kill_pidfile "$DEMO_ROOT/.webhook-receiver.pid"  "webhook-receiver"
+kill_pidfile "$DEMO_ROOT/.webui-vite.pid"        "webui vite (ADR-0017)"
 
 # 2. Compose down (including the postgres named volume) -----------------
 log_info "docker compose down -v"

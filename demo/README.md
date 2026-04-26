@@ -8,9 +8,10 @@ mixed audience: engineers can read the JSON in the terminal, stakeholders can
 follow this README and watch the same output scroll past in their pair's
 window.
 
-The whole thing lives under `demo/` plus three tiny shims (root `Makefile`,
-two new isolated cargo binaries under `demo/peer-agent/` and
-`demo/webhook-receiver/`).
+The whole thing lives under `demo/` plus small shims (root `Makefile`, two
+isolated **cargo** binaries `demo/peer-agent/` and `demo/webhook-receiver/`, and
+an optional **Python** LangGraph A2A peer in `demo/langgraph-agent/` for Stage
+9).
 
 ## TL;DR
 
@@ -31,6 +32,34 @@ make -C demo demo-stage-7
 make demo-down               # stage 8 cleanup
 ```
 
+## Web UI (ADR-0017)
+
+**In this demo** (`make demo-up` or `make -C demo demo-stage-0`):
+
+- Stage 0 turns on the **`demo-webui`** gateway in [`demo/config/default.toml`](config/default.toml)
+  and, by default, runs **`pnpm install` + Vite** for `client/webui/frontend`, then starts
+  **`ork-server`** with `ORK_A2A_PUBLIC_BASE` and `WEBUI_DEV_PROXY` so the HTML shell is
+  available at the **same origin** as the API.
+- After stage 0, open **`http://127.0.0.1:8080/`** and paste the **`JWT=`** from
+  `demo/.env` (bearer) into the Web UI. Chat and `/webui/api/*` use that token.
+- Disable the Vite + proxy block (API routes only) with `DEMO_WEBUI=0 make -C demo demo-up`.
+- Logs: `demo/logs/webui-vite.log` (Vite), `demo/logs/ork-api.log` (API).
+
+Outside the demo, local dev with hot reload: from the repo root, `cargo build -p ork-api` then
+`cargo run -p ork-cli -- webui dev` (requires `pnpm` in `PATH`). That spawns
+Vite in `client/webui/frontend` and an `ork-server` child with
+`WEBUI_DEV_PROXY=http://127.0.0.1:5173`, `ORK_CONFIG_EXTRA` set to
+`config/webui-dev.toml` (enables the `webui` gateway + default `a2a_public_base`),
+and `ORK_A2A_PUBLIC_BASE` defaulting to `http://127.0.0.1:8080` when unset. Point
+the browser at the **API** origin (e.g. `http://127.0.0.1:8080/`), not only the
+Vite port. Vite HMR may need opening the Vite port directly; the API proxy is
+GET-only. Override the server binary with `ORK_SERVER_BIN=/path/to/ork-server` if
+it is not next to `ork` in `PATH`.
+
+Release-style single binary: `cd client/webui/frontend && pnpm install && pnpm build`, then
+`cargo build -p ork-webui --features embed-spa` and link or run `ork-server` so the gateway
+serves `dist/` from RAM (no `WEBUI_DEV_PROXY`).
+
 ## Prerequisites
 
 | Tool | Why | How to check |
@@ -42,14 +71,18 @@ make demo-down               # stage 8 cleanup
 | `openssl` | mints the demo's HS256 JWT (stage 0) | `openssl version` |
 | `yq` (mikefarah) **or** `python3` + `PyYAML` *(optional)* | YAML → JSON for workflow defs (stages 4 + 6); pre-baked JSON snapshots ship under `demo/workflows/` so the demo runs without either | `yq --version` |
 | Node.js 20+ / `npx` | spawns the MCP `server-everything` child + (stage 5) | `node --version` |
-| `MINIMAX_API_KEY` env var | demo's `default_provider` is `minimax` (see [`demo/config/default.toml`](config/default.toml)) and reads its key from this env var. Per [ADR 0012](../docs/adrs/0012-multi-llm-providers.md), header values are sent verbatim — no implicit `Bearer ` prefix — so this MUST be set to the **literal Authorization header value** (e.g. `export MINIMAX_API_KEY="Bearer sk-…"`). A bare key surfaces as `401 Unauthorized — Please carry the API secret key in the 'Authorization' field` from Minimax. Swap in any OpenAI-compatible endpoint by editing `[[llm.providers]]`. Needed for stages 4 and 4a. | `echo $MINIMAX_API_KEY` |
+| `pnpm` | optional: stage 0 starts the [ADR-0017](../docs/adrs/0017-webui-chat-client.md) Vite app when `DEMO_WEBUI=1` (default); without it, Web UI static shell is skipped (`DEMO_WEBUI=0` silences the warning) | `pnpm --version` |
+| Python 3.12+ *(optional)* | stage 0 bootstraps [`demo/langgraph-agent/`](langgraph-agent/) (Stage 9); without it, the LangGraph peer is skipped and stage 9 no-ops | `python3 --version` |
+| `MINIMAX_API_KEY` env var | demo's `default_provider` is `minimax` (see [`demo/config/default.toml`](config/default.toml)) and reads its key from this env var. Per [ADR 0012](../docs/adrs/0012-multi-llm-providers.md), header values are sent verbatim — no implicit `Bearer ` prefix — so this MUST be set to the **literal Authorization header value** (e.g. `export MINIMAX_API_KEY="Bearer sk-…"`). A bare key surfaces as `401 Unauthorized — Please carry the API secret key in the 'Authorization' field` from Minimax. Swap in any OpenAI-compatible endpoint by editing `[[llm.providers]]`. Needed for stages 4, 4a, and 9. | `echo $MINIMAX_API_KEY` |
 | `GITHUB_TOKEN` env var | optional; powers `ork standup` against a real repo (stage 1) | `gh auth status` |
 
-The demo uses host ports `8080` (`ork-api`), `8090` (peer), `8091` (push
-receiver), `5433` (Postgres), `6380` (Redis). Override the first three with
-`PEER_ADDR=…` / `RECEIVER_ADDR=…` env vars if you have collisions; for the
+The demo uses host ports `8080` (`ork-api`), `8090` (Rust `peer-agent`), `8091` (push
+receiver), `8092` (Python LangGraph A2A peer, Stage 9), `5433` (Postgres), `6380` (Redis).
+Override the first four with
+`PEER_ADDR=…` / `RECEIVER_ADDR=…` / `LG_ADDR=…` if you have collisions; for the
 container ports edit `demo/docker-compose.yml` and the matching URLs in
-`demo/config/default.toml`.
+`demo/config/default.toml` (`card_url` for `langgraph-researcher` must stay in sync
+with the LangGraph listen address).
 
 ## Demo stack architecture
 
@@ -59,6 +92,7 @@ flowchart LR
     orkApi[ork-api on :8080]
     orkCli[ork CLI]
     peer[demo peer-agent on :8090]
+    langgraph[langgraph-agent on :8092]
     receiver[push webhook-receiver on :8091]
   end
   subgraph compose[docker compose]
@@ -71,6 +105,8 @@ flowchart LR
   orkApi --> redis
   orkApi -->|stdio child| mcp[npx server-everything]
   orkApi -->|JSON-RPC + SSE| peer
+  orkApi -->|A2A message/stream| langgraph
+  langgraph -->|ask_ork: JSON-RPC to researcher| orkApi
   orkApi -->|signed POST| receiver
   user -->|POST /api/gateways/*| orkApi
 ```
@@ -87,7 +123,7 @@ are enabled in `demo/config/default.toml` (`[[gateways]]` for `demo-rest` and
 `ork-gateways` ingress are documented in the ADR; the demo in-memory eventing
 setup does not include a Kafka `event_mesh` example.
 
-## The walkthrough (stages 0–8, plus 4a)
+## The walkthrough (stages 0–9, plus 4a; stage 9 run before 8 in `make demo`)
 
 Each stage is one `make -C demo demo-stage-N` target (and `demo-stage-4a` for the
 artifact tour) so it can be paused,
@@ -406,9 +442,50 @@ ADR cross-link: [`0009-push-notifications.md`](../docs/adrs/0009-push-notificati
 > `MINIMAX_API_KEY` set, the LLM call usually takes long enough for the
 > push config to be registered before the terminal event fires.
 
+### Stage 9 — LangGraph A2A peer (bidirectional; ADR 0007, 0008)
+
+What it does (best-effort: requires Python 3.12+ and a successful
+`demo/langgraph-agent` venv install during stage 0; otherwise the stage
+exits 0 with a skip):
+
+1. Ensures the LangGraph process is up on `127.0.0.1:8092` (re-uses
+   [`demo/scripts/lib.sh`](scripts/lib.sh) `boot_langgraph_agent` — idempotent).
+2. Fetches `GET /.well-known/agent-card.json` from the peer and pretty-prints
+   a subset.
+3. Confirms ork listed the `langgraph-researcher` static remote agent
+   (from the second `[[remote_agents]]` block in
+   [`demo/config/default.toml`](config/default.toml)).
+4. Compiles and POSTs [`demo/workflows/langgraph-demo.yaml`](workflows/langgraph-demo.yaml) (or the pre-baked
+   [`langgraph-demo.json`](workflows/langgraph-demo.json) snapshot) — one workflow step
+   whose `agent` is `langgraph-researcher`.
+5. Polls the run to a terminal state. The LangGraph app receives ork’s outbound
+   `message/stream` (ork → peer), then its graph calls
+   `ask_ork("researcher", …)` which sends JSON-RPC to ork’s
+   `POST /a2a/agents/researcher` (peer → ork) using `JWT` + `X-Tenant-Id` from
+   `demo/.env` (see [`demo_langgraph_agent/ork_client.py`](langgraph-agent/src/demo_langgraph_agent/ork_client.py)).
+6. Tails `demo/logs/langgraph-agent.log` and (best-effort) greps `ork-api` for
+   the reverse leg.
+
+`MINIMAX_API_KEY` is required for the OpenAI-compatible LangGraph + researcher
+LLM path; the wire is still snake_case A2A JSON (see
+[`crates/ork-a2a`](../crates/ork-a2a) — the Python process does **not** use
+`a2a-sdk` for transport, so the shapes match ork’s `A2aRemoteAgent`).
+
+```bash
+export MINIMAX_API_KEY="Bearer sk-…"   # same as other LLM stages
+make -C demo demo-stage-9
+```
+
+Expected output shape: [`demo/expected/stage-9.txt`](expected/stage-9.txt).
+
+ADR cross-links: [`0007`](../docs/adrs/0007-remote-a2a-agent-client.md) (outbound
+client), [`0008`](../docs/adrs/0008-a2a-server-endpoints.md) (inbound
+`/a2a/agents/{id}` JSON-RPC the LangGraph `ask_ork` tool calls).
+
 ### Stage 8 — Teardown
 
-What it does: kills the `ork-api`, peer-agent and webhook-receiver
+What it does: kills the `ork-api`, peer-agent, `langgraph-agent`, and
+webhook-receiver
 processes (PID files under `demo/`), `docker compose down -v --remove-orphans`,
 and removes `demo/.env`, `demo/logs/`, `demo/data/`, `demo/.last-hooks.json`.
 
@@ -421,10 +498,10 @@ make demo-down                  # alias for `make -C demo demo-stage-8`
 ## Troubleshooting
 
 - **Port already in use** — the demo claims host ports `8080`, `8090`,
-  `8091`, `5433`, `6380`. For the cargo-launched binaries override with
-  `PEER_ADDR=127.0.0.1:9090 make -C demo demo-stage-6`. For the docker
-  ports, edit `demo/docker-compose.yml` and the matching URLs in
-  `demo/config/default.toml`.
+  `8091`, `8092`, `5433`, `6380`. For the cargo-launched binaries override with
+  `PEER_ADDR=127.0.0.1:9090` / `LG_ADDR=127.0.0.1:9192` etc. For the docker
+  ports, edit `demo/docker-compose.yml` and the matching `card_url` in
+  `demo/config/default.toml` for each remote agent.
 - **`MINIMAX_API_KEY` not set** — stages 4 and 4a exit 0 with a hint and stage 7's
   live push half is skipped. The other stages still run end-to-end.
 - **`npx` missing** — stage 5's live MCP round-trip is skipped (the boot
@@ -532,19 +609,22 @@ demo/
 │   ├── default.toml         # overlays the workspace config/default.toml
 │   └── peer.toml            # stub vendor-planner identity
 ├── scripts/
-│   ├── stage-0-bootstrap.sh … stage-8-teardown.sh (includes `stage-4a-artifact-tour.sh`)
-│   └── lib.sh               # shared helpers (mint-jwt, wait-for, etc.)
+│   ├── stage-0-bootstrap.sh … stage-9-langgraph.sh, stage-8-teardown.sh (includes `stage-4a-artifact-tour.sh`)
+│   └── lib.sh               # shared helpers (mint-jwt, wait-for, `boot_langgraph_agent`, etc.)
 ├── workflows/
 │   ├── change-plan.json       # stage 4 fallback snapshot (sync with `workflow-templates/change-plan.yaml`)
 │   ├── artifact-tour.json     # stage 4a fallback snapshot (sync with `workflow-templates/artifact-tour.yaml`)
 │   ├── federation-demo.yaml  # stage 6
-│   └── federation-demo.json  # yq/python fallback for stage 6
+│   ├── federation-demo.json  # yq/python fallback for stage 6
+│   ├── langgraph-demo.yaml   # stage 9
+│   └── langgraph-demo.json
 ├── peer-agent/              # stub remote A2A peer (cargo, isolated)
+├── langgraph-agent/         # LangGraph + Starlette A2A peer (Python, isolated; Stage 9)
 ├── webhook-receiver/        # push notification receiver (cargo, isolated)
 ├── expected/                # golden output snippets per stage
 └── (runtime) .env, logs/, data/, .last-hooks.json, .*.pid
 ```
 
 The runtime artefacts (`.env`, `logs/`, `data/`, `.*.pid`,
-`.last-hooks.json`) are created by stages 0/6/7 and removed by stage 8.
+`.last-hooks.json`) are created by stages 0/6/7/9 and removed by stage 8.
 They are git-ignored.
