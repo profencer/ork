@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import uuid
 from collections.abc import Sequence
+from contextvars import ContextVar
 from typing import Any
 
 from langchain_core.messages import (
@@ -17,6 +21,50 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
+
+log = logging.getLogger(__name__)
+
+# Set for the duration of `run_research_session` so `ask_ork` can tag logs for stage 9.
+_langgraph_trace_run_id: ContextVar[str | None] = ContextVar("langgraph_trace_run_id", default=None)
+
+_TRACE_CONTENT_MAX = 800
+
+
+def _trace_truncate(s: str, max_len: int = _TRACE_CONTENT_MAX) -> str:
+    if len(s) <= max_len:
+        return s
+    return f"{s[: max_len - 3]}..."
+
+
+def _log_trace_agent(rid: str, msg: AIMessage) -> None:
+    if msg.tool_calls:
+        parts: list[str] = []
+        for tc in msg.tool_calls:
+            if isinstance(tc, dict):
+                name = tc.get("name", "?")
+                raw_args = tc.get("args")
+                if raw_args is None:
+                    raw_args = tc.get("arguments")
+            else:
+                name = getattr(tc, "name", "?")
+                raw_args = getattr(tc, "args", None)
+            args_s = (
+                json.dumps(raw_args, ensure_ascii=False)
+                if isinstance(raw_args, dict)
+                else str(raw_args)
+            )
+            parts.append(f"{name}({args_s[:500]})")
+        log.info("[trace agent] run=%s tool_calls=[%s]", rid, ", ".join(parts))
+    else:
+        text = _aimessage_text(msg)
+        log.info("[trace agent] run=%s final_text=%s", rid, _trace_truncate(text))
+
+
+def _log_trace_tools(rid: str, msg: ToolMessage) -> None:
+    name = msg.name or "tool"
+    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+    log.info("[trace tools] run=%s %s -> %s", rid, name, _trace_truncate(content))
+
 
 SYSTEM = """You are a code-research router for the ork demo.
 You MUST use the `ask_ork` tool to delegate repository research to ork's built-in
@@ -37,7 +85,8 @@ async def ask_ork(agent_id: str, prompt: str) -> str:
     """
     from demo_langgraph_agent.ork_client import ask_ork as _ask
 
-    return await _ask(agent_id, prompt)
+    tid = _langgraph_trace_run_id.get()
+    return await _ask(agent_id, prompt, trace_id=tid)
 
 
 def _get_llm() -> ChatOpenAI:
@@ -79,11 +128,33 @@ def build_graph() -> Any:
     return builder.compile()
 
 
+def _aimessage_text(msg: AIMessage) -> str:
+    """Normalize content: some OpenAI-compatible APIs return list blocks, not str."""
+    c = msg.content
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: list[str] = []
+        for block in c:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text" and "text" in block:
+                    parts.append(str(block["text"]))
+                elif "text" in block:
+                    parts.append(str(block["text"]))
+            elif hasattr(block, "text"):
+                parts.append(str(getattr(block, "text", "")))
+        return "".join(parts)
+    return str(c) if c else ""
+
+
 def last_text_content(messages: Sequence[BaseMessage]) -> str:
     for m in reversed(list(messages)):
-        if isinstance(m, AIMessage) and m.content and not m.tool_calls:
-            if isinstance(m.content, str):
-                return m.content
+        if isinstance(m, AIMessage) and not m.tool_calls:
+            text = _aimessage_text(m).strip()
+            if text:
+                return text
     for m in reversed(list(messages)):
         if isinstance(m, ToolMessage) and m.content:
             if isinstance(m.content, str) and m.content:
@@ -95,5 +166,18 @@ async def run_research_session(user_text: str) -> str:
     """Run one graph turn: system + user, until no tool calls."""
     graph = build_graph()
     initial: list[BaseMessage] = [SystemMessage(content=SYSTEM), HumanMessage(content=user_text)]
-    st = await graph.ainvoke({"messages": initial})
-    return last_text_content(st["messages"])
+    rid = str(uuid.uuid4())
+    token = _langgraph_trace_run_id.set(rid)
+    all_messages: list[BaseMessage] = list(initial)
+    try:
+        async for update in graph.astream({"messages": initial}, stream_mode="updates"):
+            for _node_name, node_data in update.items():
+                for m in node_data.get("messages", []):
+                    all_messages.append(m)
+                    if isinstance(m, AIMessage):
+                        _log_trace_agent(rid, m)
+                    elif isinstance(m, ToolMessage):
+                        _log_trace_tools(rid, m)
+    finally:
+        _langgraph_trace_run_id.reset(token)
+    return last_text_content(all_messages)

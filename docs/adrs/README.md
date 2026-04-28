@@ -126,6 +126,23 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0025](0025-typed-output-validation-and-verifier-agent.md) | Typed-output validation and verifier-agent port | Proposed | 4 |
 | [0026](0026-workflow-topology-selection-from-task-features.md) | Workflow topology selection from task features (classifier) | Proposed | 4 |
 | [0027](0027-human-in-the-loop.md) | Human-in-the-loop: approval steps and input requests | Proposed | 4 |
+| [0028](0028-shell-executor-and-test-runners.md) | Shell executor and test-runner integration | Proposed | 3 |
+| [0029](0029-workspace-file-editor.md) | Workspace file editor and patch application | Proposed | 4 |
+| [0030](0030-git-operations.md) | Git operations and worktree management | Proposed | 3 |
+| [0031](0031-transactional-code-changes.md) | Transactional code changes and rollback | Proposed | 4 |
+| [0032](0032-agent-memory-and-context-compaction.md) | Agent memory and context compaction | Proposed | 4 |
+| [0033](0033-coding-agent-personas.md) | Coding agent personas and solo reference | Proposed | 4 |
+| [0034](0034-per-model-capability-profiles.md) | Per-model capability profiles | Proposed | 4 |
+| [0035](0035-constrained-decoding.md) | Constrained decoding for tool calls | Proposed | 4 |
+| [0037](0037-lsp-diagnostics.md) | LSP diagnostics as a feedback source | Proposed | 4 |
+| [0038](0038-plan-mode-and-cross-verification.md) | Plan mode and A2A plan cross-verification | Proposed | 4 |
+| [0039](0039-agent-tool-call-hooks.md) | Agent tool-call hooks | Proposed | 4 |
+| [0040](0040-repo-map.md) | Repo map for code-aware context priming | Proposed | 4 |
+| [0041](0041-nested-workspaces.md) | Nested workspaces and sub-worktree coordination | Proposed | 4 |
+| [0042](0042-capability-discovery.md) | Capability-tagged agent discovery for coding teams | Proposed | 4 |
+| [0043](0043-team-shared-memory.md) | Team-scoped shared memory and decision log | Proposed | 4 |
+| [0044](0044-multi-agent-diff-aggregation.md) | Multi-agent transactional diff aggregation | Proposed | 4 |
+| [0045](0045-coding-team-orchestrator.md) | Coding team orchestrator (architect agent) | Proposed | 4 |
 
 ## Decision graph
 
@@ -192,6 +209,38 @@ flowchart LR
   ADR0021 --> ADR0027
   ADR0025 --> ADR0027
   ADR0027 --> ADR0022
+  ADR0011 --> ADR0028[0028 Shell executor]
+  ADR0010 --> ADR0028
+  ADR0016 --> ADR0028
+  ADR0020 --> ADR0028
+  ADR0028 --> ADR0021
+  ADR0028 --> ADR0025
+  ADR0027 --> ADR0031[0031 Transactional code changes]
+  ADR0028 --> ADR0031
+  ADR0029 --> ADR0031
+  ADR0030 --> ADR0031
+  ADR0016 --> ADR0031
+  ADR0018 --> ADR0031
+  ADR0031 --> ADR0022
+  ADR0011 --> ADR0032[0032 Agent memory and compaction]
+  ADR0003 --> ADR0032
+  ADR0012 --> ADR0032
+  ADR0020 --> ADR0032
+  ADR0032 --> ADR0022
+  ADR0031 --> ADR0044[0044 Multi-agent diff aggregation]
+  ADR0037[0037 LSP diagnostics] --> ADR0044
+  ADR0038[0038 Plan mode and cross-verification] --> ADR0044
+  ADR0041[0041 Nested workspaces] --> ADR0044
+  ADR0043[0043 Team-shared memory] --> ADR0044
+  ADR0044 --> ADR0022
+  ADR0033[0033 Coding personas] --> ADR0045[0045 Coding team orchestrator]
+  ADR0038 --> ADR0045
+  ADR0040[0040 Repo map] --> ADR0045
+  ADR0041 --> ADR0045
+  ADR0042[0042 Capability discovery] --> ADR0045
+  ADR0043 --> ADR0045
+  ADR0044 --> ADR0045
+  ADR0045 --> ADR0022
 ```
 
 ## Mapping-to-SAM summary

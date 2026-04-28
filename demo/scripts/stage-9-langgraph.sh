@@ -114,18 +114,110 @@ printf '%s' "$RUN" | jq -r '
 '
 
 echo
-log_info "tail of langgraph-agent log (inbound A2A + ask_ork):"
-tail -n 25 "$LOG_DIR/langgraph-agent.log" 2>/dev/null || true
+LG_LOG="${LOG_DIR}/langgraph-agent.log"
+ORK_LOG="${LOG_DIR}/ork-api.log"
 
-echo
-if [[ "$status" == "completed" ]]; then
-  log_info "grep ork reverse leg (researcher) in ork-api log:"
-  if grep -E "a2a/agents/researcher|/researcher" "$LOG_DIR/ork-api.log" 2>/dev/null | tail -n 5; then
-    true
+if [[ -f "$LG_LOG" ]]; then
+  TRACE_LINE=$(grep '\[ask_ork\]' "$LG_LOG" | tail -n1 || true)
+  if [[ -n "$TRACE_LINE" ]]; then
+    RID=$(printf '%s' "$TRACE_LINE" | grep -oE 'run=[^ ]+' | head -1 | cut -d= -f2 || true)
+    R_TASK_ID=$(printf '%s' "$TRACE_LINE" | grep -oE 'task_id=[^ ]+' | head -1 | cut -d= -f2 || true)
   else
-    log_warn "no explicit researcher line in ork-api.log — check JSON logs for run_id=$RUN_ID"
+    RID=""
+    R_TASK_ID=""
   fi
 else
+  TRACE_LINE=""
+  RID=""
+  R_TASK_ID=""
+fi
+
+if [[ -n "$RID" ]]; then
+  log_info "LangGraph ReAct trace (run=$RID, from langgraph-agent.log):"
+  grep -E "run=${RID}" "$LG_LOG" 2>/dev/null | grep -E '\[trace agent\]|\[trace tools\]|\[ask_ork\]' || true
+else
+  if [[ "${LG_FOREIGN_PEER:-0}" == "1" ]]; then
+    log_warn "no LangGraph trace: peer on ${LG_ADDR:-127.0.0.1:8092} is not demo-managed — stop it and run \`make -C demo demo-stage-0\` so logs go to $LG_LOG"
+  elif [[ ! -s "$LG_LOG" ]]; then
+    log_warn "no [ask_ork] line — $LG_LOG is missing or empty (demo-managed peer should append here)"
+  else
+    log_warn "no [ask_ork] line in $LG_LOG — trace unavailable (upgrade/restart langgraph-agent?)"
+  fi
+fi
+
+echo
+if [[ "$status" == "completed" && -n "${R_TASK_ID:-}" && "$R_TASK_ID" != "unknown" ]]; then
+  log_info "Researcher A2A task (tasks/get, id=$R_TASK_ID):"
+  if [[ -z "${TENANT_ID:-}" ]]; then
+    log_warn "TENANT_ID unset — skipping tasks/get"
+  else
+    TG_RESP=$(curl -sS -w '\n%{http_code}' \
+      -H "Authorization: Bearer $JWT" \
+      -H "X-Tenant-Id: $TENANT_ID" \
+      -H 'Content-Type: application/json' \
+      -X POST "$BASE_URL/a2a/agents/researcher" \
+      -d "$(jq -nc --arg tid "$R_TASK_ID" \
+        '{jsonrpc:"2.0",id:1,method:"tasks/get",params:{id:$tid}}')")
+    TG_BODY=$(printf '%s' "$TG_RESP" | sed '$d')
+    TG_CODE=$(printf '%s' "$TG_RESP" | tail -n1)
+    if [[ "$TG_CODE" != "200" ]]; then
+      log_warn "tasks/get HTTP $TG_CODE"
+      printf '%s\n' "$TG_BODY" >&2 || true
+    else
+      printf '%s' "$TG_BODY" | jq '
+        if .error then {error: .error}
+        else .result | {
+          id,
+          status,
+          history: [.history[] | {
+            role,
+            parts: [.parts[] | if (.kind? // .type?) == "text" then
+              {kind: "text", text: (.text | if length > 400 then .[0:400] + "..." else . end)}
+            else . end]
+          }]
+        }
+        end
+      ' 2>/dev/null || printf '%s\n' "$TG_BODY"
+    fi
+  fi
+elif [[ "$status" == "completed" ]]; then
+  log_warn "researcher task_id missing or unknown — skipping tasks/get"
+fi
+
+echo
+log_info "Researcher LLM output (from ork-api.log):"
+if [[ -f "$ORK_LOG" ]]; then
+  # Last block between researcher LLM banners (ORK_PRINT_LLM_OUTPUT=1 from stage 0).
+  awk '
+    BEGIN { lastcount = 0 }
+    /========== LLM output \(researcher\) ==========/ {
+      delete buf
+      n = 1
+      buf[1] = $0
+      inblock = 1
+      next
+    }
+    inblock && /========== end LLM output ==========/ {
+      n++
+      buf[n] = $0
+      lastcount = n
+      for (i = 1; i <= lastcount; i++) last[i] = buf[i]
+      inblock = 0
+      next
+    }
+    inblock {
+      n++
+      buf[n] = $0
+    }
+    END {
+      for (i = 1; i <= lastcount; i++) print last[i]
+    }
+  ' "$ORK_LOG" | tail -n 80 || true
+else
+  log_warn "no ork-api.log — researcher LLM block unavailable"
+fi
+
+if [[ "$status" != "completed" ]]; then
   log_warn "run did not complete successfully (status=$status)"
 fi
 

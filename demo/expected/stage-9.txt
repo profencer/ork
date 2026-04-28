@@ -19,11 +19,18 @@ POST /api/workflows  (langgraph-demo)
 "via_langgraph"
 completed
 
-# In langgraph log — proof of tool use (researcher is called back into ork):
-# ask_ork
-# researcher
+# LangGraph ReAct trace (run=<uuid>, from langgraph-agent.log):
+#   [trace agent] run=... tool_calls=[ask_ork(...)]
+#   [trace tools] run=... ask_ork -> "..."
+#   [trace agent] run=... final_text=...
+#   [ask_ork] run=... agent=researcher task_id=... reply_chars=...
 
-# Optional: in ork-api.log, requests hit /a2a/agents/researcher (reverse leg).
+# Researcher A2A task (tasks/get, id=<uuid>):
+#   JSON: id, status, history (roles + truncated text parts)
+
+# Researcher LLM output (from ork-api.log):
+#   ======== LLM output (researcher) ========== ... end LLM output ========
+#   (requires ORK_PRINT_LLM_OUTPUT=1 from stage 0)
 
 Stage 9 done
 next: make -C demo demo-stage-8  (or full teardown)

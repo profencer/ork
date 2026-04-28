@@ -1,0 +1,2 @@
+
+Suggested ordering: 0042 and 0043 first (independent, no upstream from this batch); 0041 next (gives 0044 its diff source); 0044 after (consumes 0041); 0045 last (composes everything). 0042/0043 can run in parallel worktrees; 0044 and 0045 depend on the rest.

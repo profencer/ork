@@ -141,6 +141,8 @@ else
     "ORK__DATABASE__URL=postgres://ork:ork@127.0.0.1:5433/ork_demo"
     "ORK__REDIS__URL=redis://127.0.0.1:6380/"
     "RUST_LOG=${RUST_LOG:-info,ork_api=info,ork_mcp=info,ork_integrations=info,ork_push=info}"
+    # Bracket assistant text deltas in ork-api.log as `LLM output (researcher)` blocks (stage 9).
+    "ORK_PRINT_LLM_OUTPUT=1"
   )
   if [[ -n "${MINIMAX_API_KEY:-}" ]]; then
     ENV_OVERRIDES+=("MINIMAX_API_KEY=$MINIMAX_API_KEY")

@@ -198,14 +198,23 @@ boot_peer_agent() {
 # LG_ADDR / LG_CARD_URL / LG_LOG / LG_PID_FILE; idempotent; may set LG_SKIPPED=1.
 boot_langgraph_agent() {
   LG_SKIPPED=0
+  LG_FOREIGN_PEER=0
   LG_ADDR="${LG_ADDR:-127.0.0.1:8092}"
   LG_CARD_URL="http://${LG_ADDR}/.well-known/agent-card.json"
   LG_LOG="$LOG_DIR/langgraph-agent.log"
   LG_PID_FILE="$DEMO_ROOT/.langgraph-agent.pid"
   local lg_dir="$DEMO_ROOT/langgraph-agent"
 
+  # Only treat :8092 as "ours" if the demo PID file points at a live process.
+  # Otherwise another LangGraph (or stale manual run) may answer the card URL
+  # while nothing appends to demo/logs/langgraph-agent.log — stage 9 traces break.
   if curl -s -o /dev/null --max-time 1 "$LG_CARD_URL"; then
-    log_info "langgraph-agent already responding on $LG_ADDR — re-using it"
+    if [[ -f "$LG_PID_FILE" ]] && kill -0 "$(cat "$LG_PID_FILE")" 2>/dev/null; then
+      log_info "langgraph-agent already responding on $LG_ADDR — re-using demo-managed instance (logs -> $LG_LOG)"
+      return 0
+    fi
+    log_warn "something already responds on $LG_CARD_URL but it is not this demo's langgraph-agent (expected live PID in $LG_PID_FILE). Stage 9 will not see [ask_ork] / trace lines in $LG_LOG. Stop the process on $LG_ADDR and run \`make -C demo demo-stage-0\`, or start the peer only via stage 0."
+    LG_FOREIGN_PEER=1
     return 0
   fi
 
