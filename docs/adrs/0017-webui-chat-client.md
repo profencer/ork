@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-04-24
-- **Phase:** 4
+- **Phase:** 2
 - **Relates to:** 0008, 0013, 0015, 0016, 0019, 0021
 
 ## Context

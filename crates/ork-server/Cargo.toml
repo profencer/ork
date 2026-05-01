@@ -1,0 +1,12 @@
+[package]
+name = "ork-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axum.workspace = true
+ork-app.workspace = true
+ork-common.workspace = true
+tokio = { workspace = true, features = ["sync", "macros", "net", "time", "rt"] }
+tracing.workspace = true

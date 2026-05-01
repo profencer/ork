@@ -101,7 +101,7 @@ pub fn weather_workflow() -> Workflow {
 ```
 
 The user registers it via [`OrkApp::builder().workflow(...)`](0049-orkapp-central-registry.md)
-and runs it via `app.run_workflow("weather", ctx, input)` or by
+and runs it via `app.run_workflow("weather", ctx, input).await` or by
 hitting `/api/workflows/weather/run` on the auto-generated server
 (ADR 0056).
 

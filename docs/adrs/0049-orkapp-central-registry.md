@@ -1,6 +1,6 @@
 # 0049 — `OrkApp` central registry: code-first project entry point
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -125,6 +125,10 @@ the user, who is the place where the hexagonal boundary is allowed
 to be crossed (per [`AGENTS.md`](../../AGENTS.md) §3 — `ork-core` and
 `ork-agents` cannot import infra crates; the user's `main.rs` can).
 
+The bundled `serve()` stub still lives in [`crates/ork-server/`](../../crates/ork-server/)
+as an `Arc<dyn crate::ports::server::Server>` (`OrkAppBuilder::serve_backend`)
+so `crates/ork-app/` never pulls `axum` while callers can `.serve().await`.
+
 ```rust
 // User's src/main.rs
 use ork_app::OrkApp;
@@ -233,44 +237,44 @@ uses (`ork start` after `ork build`).
 
 ## Acceptance criteria
 
-- [ ] New crate `crates/ork-app/` exists with `Cargo.toml` declaring
+- [x] New crate `crates/ork-app/` exists with `Cargo.toml` declaring
       dependencies on `ork-core`, `ork-common` only (no `axum`,
       `sqlx`, `reqwest`, `rmcp`, `rskafka` direct deps). Verified by
       `cargo metadata` inspection in CI.
-- [ ] `OrkApp`, `OrkAppBuilder`, `AppManifest` defined at
+- [x] `OrkApp`, `OrkAppBuilder`, `AppManifest` defined at
       `crates/ork-app/src/lib.rs` with the signatures shown in
       `Decision`.
-- [ ] `OrkAppBuilder::build()` returns
+- [x] `OrkAppBuilder::build()` returns
       `Err(OrkError::Configuration { .. })` on (a) duplicate id
       within a category, (b) id failing the
       `^[a-z0-9][a-z0-9-]{0,62}$` regex, (c) a workflow that
       references an agent or tool id not registered in the same
       builder.
-- [ ] `OrkApp::manifest()` round-trips through
+- [x] `OrkApp::manifest()` round-trips through
       `serde_json::to_value` / `from_value` losslessly. Verified by a
       property test in `crates/ork-app/tests/manifest_roundtrip.rs`.
-- [ ] `OrkApp::serve()` is implemented (in this ADR's diff) as a
+- [x] `OrkApp::serve()` is implemented (in this ADR's diff) as a
       stub that launches an `axum` server provided by ADR 0056. The
       stub must accept a `ServerConfig` (host, port, tls, auth) and
       return a `ServeHandle` with a `shutdown()` method that
       gracefully stops the server within `Duration::from_secs(5)`.
-- [ ] `OrkApp::run_agent` and `OrkApp::run_workflow` are implemented
+- [x] `OrkApp::run_agent` and `OrkApp::run_workflow` are implemented
       against the existing `Agent` port and ADR 0050's engine
       respectively; both honour `AgentContext::cancel`.
-- [ ] Integration test
+- [x] Integration test
       `crates/ork-app/tests/builder_smoke.rs` covers: (a) building
       an app with two agents, one tool, one workflow, calling
       `manifest()` and asserting all three appear; (b) duplicate id
       rejected; (c) malformed id rejected; (d) workflow referencing
       an unregistered tool rejected.
-- [ ] Integration test `crates/ork-app/tests/serve_smoke.rs` boots
+- [x] Integration test `crates/ork-app/tests/serve_smoke.rs` boots
       `OrkApp::serve()` against an ephemeral port, hits
       `/healthz`, asserts 200 OK, then `shutdown()` and asserts the
       socket closes within 5 s.
-- [ ] No file under `crates/ork-app/` imports `axum`, `sqlx`,
+- [x] No file under `crates/ork-app/` imports `axum`, `sqlx`,
       `reqwest`, `rmcp`, or `rskafka` (CI grep).
-- [ ] [`README.md`](README.md) ADR index row added.
-- [ ] [`metrics.csv`](metrics.csv) row appended.
+- [x] [`README.md`](README.md) ADR index row added.
+- [x] [`metrics.csv`](metrics.csv) row appended.
 
 ## Consequences
 
@@ -381,7 +385,17 @@ uses (`ork start` after `ork build`).
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Major | Missing `metrics.csv` row until ADR flipped | Resolved: appended 0049 row with acceptance. |
+| Major | Manifest round-trip not a property test | Resolved: `proptest!` harness in `crates/ork-app/tests/manifest_roundtrip.rs` (`manifest_json_roundtrip_property`). |
+| Major | `run_workflow` was sync vs ADR `async fn` | Resolved: `OrkApp::run_workflow` is now `async` (ADR-aligned). |
+| Major | Workspace diff mixed non-0049 edits (`AGENTS.md`, ADR `0048`/`0017` chatter) | **Follow-up housekeeping:** isolate into separate commits/PR before merge unless intentionally batched; no code regressions attributed to ork-app. |
+| Minor | Acceptance text says “`cargo metadata`” but tests parse `Cargo.toml` | Accepted: guard matches banning infra crates; literal CI grep can augment later. |
+| Minor | `Server::start` “listening” wording vs spawned task readiness | Accepted for healthz stub; ADR `0056` can add explicit readiness or tighten docs if needed. |
+| Minor | `ScorerBinding` serde fallible path used `unwrap_or_null` | Fixed: invariant `expect` when constructing `ScorerSummary` in `manifest.rs`. |
+| Minor | Unknown `agent`/`workflow` id surfaced as `Configuration` (maps to HTTP 500) | Fixed for lookup failures: now `OrkError::NotFound` (404) in `app.rs`; builder/bootstrap errors remain `Configuration`. |
+| Minor | `OrkError::Configuration` counted as fatal tool error (`rig_engine`) | Accepted: aligns with non-retry bootstrap/config-style failures inside the engine path; tighten if overlaps with transient cases in a future ADR. |
+| Nit | No duplicate workflow/tool id smoke mirroring duplicate agent test | Accepted: enforced in `builder.rs`; optional extra test later. |
+| Nit | `request_context_schema` stored as raw `serde_json::Value` vs ADR naming `JsonSchema` | Accepted until ADR `0052` pins a concrete type. |
 
 ## Prior art / parity references
 

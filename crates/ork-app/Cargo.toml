@@ -1,0 +1,21 @@
+[package]
+name = "ork-app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+futures.workspace = true
+ork-common.workspace = true
+ork-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "macros", "net", "time", "rt"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ork-a2a.workspace = true
+ork-server.workspace = true
+proptest.workspace = true

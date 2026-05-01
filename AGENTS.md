@@ -15,7 +15,18 @@ The architecture is **A2A-first** (Google's Agent2Agent protocol),
 
 The full architecture, glossary and reference diagram live in
 [`docs/adrs/README.md`](docs/adrs/README.md). The decision graph,
-phasing and per-ADR mapping to Solace Agent Mesh are also there.
+phasing, and per-ADR prior-art / parity references (including Solace
+Agent Mesh where that history applies) are also there.
+
+After [ADR 0048](docs/adrs/0048-pivot-to-code-first-rig-platform.md),
+ork is a **code-first agent platform** with an **A2A wire surface** —
+the developer-facing shape is Mastra-like composition (central
+registry, typed workflows/tools/agents, Studio, REST+SSE) on top of
+[`rig-core`](https://docs.rs/rig-core/latest/rig/) as the per-agent
+engine; this is deliberately **not** framed as “a SAM port without
+Solace”. The hard invariants in §3 below (A2A-first, no Solace,
+external tools via MCP, hexagonal boundaries) are unchanged. Phase 4
+in the ADR index (`0048`–`0057`) is the code-first platform runway.
 
 ## 2. Stack and layout
 

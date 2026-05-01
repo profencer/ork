@@ -35,6 +35,11 @@ pub enum OrkError {
     #[error("unsupported: {0}")]
     Unsupported(String),
 
+    /// Invalid or contradictory application configuration (`OrkApp` builder / boot-time wiring).
+    /// ADR [`0049`](../../docs/adrs/0049-orkapp-central-registry.md).
+    #[error("configuration error: {message}")]
+    Configuration { message: String },
+
     /// Remote A2A agent returned a hard error. Carries the application code (HTTP status
     /// for transport-level failures, or the JSON-RPC error code from the response body)
     /// and the operator-facing message. ADR 0007 §`Failure model`.
@@ -61,7 +66,7 @@ impl OrkError {
             | Self::Workflow(_)
             | Self::A2aClient(..)
             | Self::A2aStreamLost(_) => 502,
-            Self::Database(_) | Self::Internal(_) => 500,
+            Self::Database(_) | Self::Internal(_) | Self::Configuration { .. } => 500,
             Self::Unsupported(_) => 501,
         }
     }

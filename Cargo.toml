@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ork-a2a",
     "crates/ork-api",
+    "crates/ork-app",
     "crates/ork-cli",
     "crates/ork-core",
     "crates/ork-agents",
@@ -15,6 +16,7 @@ members = [
     "crates/ork-persistence",
     "crates/ork-common",
     "crates/ork-push",
+    "crates/ork-server",
     "crates/ork-storage",
     "crates/ork-webui",
 ]
@@ -34,6 +36,7 @@ license = "MIT"
 # Internal crates
 ork-a2a = { path = "crates/ork-a2a" }
 ork-api = { path = "crates/ork-api" }
+ork-app = { path = "crates/ork-app" }
 ork-cli = { path = "crates/ork-cli" }
 ork-core = { path = "crates/ork-core" }
 ork-agents = { path = "crates/ork-agents" }
@@ -46,6 +49,7 @@ ork-mcp = { path = "crates/ork-mcp" }
 ork-persistence = { path = "crates/ork-persistence" }
 ork-common = { path = "crates/ork-common" }
 ork-push = { path = "crates/ork-push" }
+ork-server = { path = "crates/ork-server" }
 ork-storage = { path = "crates/ork-storage" }
 ork-webui = { path = "crates/ork-webui" }
 
@@ -159,6 +163,7 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa", "jwk",
 
 # HTTP mocking for tests
 wiremock = "0.6"
+proptest = "1"
 # Containerised integration tests (ADR-0007 reference-server-it). Default-off,
 # only consumed under `--features reference-server-it` so CI can opt into the
 # heavier docker-backed run.

@@ -120,7 +120,7 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0014](0014-plugin-system.md) | Plugin system | Superseded by [0024](0024-wasm-plugin-system.md) | 3 |
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Implemented | 3 |
 | [0016](0016-artifact-storage.md) | Artifact / file-management service | Accepted | 3 |
-| [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Accepted | 4 |
+| [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Accepted | 2 |
 | [0018](0018-dag-executor-enhancements.md) | Workflow DAG executor enhancements | Superseded by [0050](0050-code-first-workflow-dsl.md) | – |
 | [0019](0019-scheduled-tasks.md) | Scheduled tasks | Proposed | 3 |
 | [0020](0020-tenant-security-and-trust.md) | Tenant security and A2A trust model | Proposed | 3 |
@@ -151,8 +151,8 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0045](0045-coding-team-orchestrator.md) | Coding team orchestrator (architect agent) | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
 | [0046](0046-evaluation-harness-and-regression-corpus.md) | Evaluation harness and regression corpus | Superseded by [0054](0054-live-scorers-and-eval-corpus.md) | – |
 | [0047](0047-rig-as-local-agent-engine.md) | Adopt `rig-core` as the local-agent engine | Accepted | 3 |
-| [0048](0048-pivot-to-code-first-rig-platform.md) | Strategic pivot to a code-first platform on rig | Proposed | 4 |
-| [0049](0049-orkapp-central-registry.md) | `OrkApp` central registry: code-first project entry point | Proposed | 4 |
+| [0048](0048-pivot-to-code-first-rig-platform.md) | Strategic pivot to a code-first platform on rig | Accepted | 4 |
+| [0049](0049-orkapp-central-registry.md) | `OrkApp` central registry: code-first project entry point | Accepted | 4 |
 | [0050](0050-code-first-workflow-dsl.md) | Code-first Workflow DSL with typed steps and suspend/resume | Proposed | 4 |
 | [0051](0051-code-first-tool-dsl.md) | Code-first Tool DSL on `rig::Tool` with typed Args/Output | Proposed | 4 |
 | [0052](0052-code-first-agent-dsl.md) | Code-first Agent DSL on `rig::Agent` with structured outputs | Proposed | 4 |

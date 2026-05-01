@@ -122,7 +122,10 @@ pub(crate) async fn try_spill_oversized_tool_result(
 
 pub(crate) fn is_fatal_tool_error(err: &OrkError) -> bool {
     match err {
-        OrkError::Workflow(_) | OrkError::Internal(_) | OrkError::Database(_) => true,
+        OrkError::Workflow(_)
+        | OrkError::Internal(_)
+        | OrkError::Database(_)
+        | OrkError::Configuration { .. } => true,
         OrkError::NotFound(_)
         | OrkError::Unauthorized(_)
         | OrkError::Forbidden(_)
