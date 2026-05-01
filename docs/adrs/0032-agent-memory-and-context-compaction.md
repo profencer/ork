@@ -1,6 +1,6 @@
 # 0032 — Agent memory and context compaction
 
-- **Status:** Proposed
+- **Status:** Superseded by 0053
 - **Date:** 2026-04-28
 - **Deciders:** ork core
 - **Phase:** 4

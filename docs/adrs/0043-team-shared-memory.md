@@ -1,6 +1,6 @@
 # 0043 — Team-scoped shared memory and decision log
 
-- **Status:** Proposed
+- **Status:** Superseded by 0053
 - **Date:** 2026-04-28
 - **Deciders:** ork core
 - **Phase:** 4

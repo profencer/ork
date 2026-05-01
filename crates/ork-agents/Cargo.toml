@@ -21,6 +21,22 @@ async-stream = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true }
 glob = "0.3"
+rig-core = { workspace = true, optional = true }
+tokio-stream = { workspace = true }
+
+[features]
+default = ["rig-engine"]
+rig-engine = ["dep:rig-core"]
+mcp-stdio-it = []
 
 [dev-dependencies]
 chrono = { workspace = true }
+ork-mcp = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "stream",
+    "form",
+    "rustls",
+    "http2",
+    "charset",
+] }

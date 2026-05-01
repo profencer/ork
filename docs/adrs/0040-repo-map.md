@@ -1,6 +1,6 @@
 # 0040 — Repo map for code-aware context priming
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-28
 - **Deciders:** ork core
 - **Phase:** 4

@@ -1,6 +1,6 @@
 # 0031 — Transactional Code Changes & Rollback
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-28
 - **Deciders:** ork core team
 - **Phase:** 4

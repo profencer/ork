@@ -1,6 +1,6 @@
 # 0025 — Typed-output validation and verifier-agent port
 
-- **Status:** Proposed
+- **Status:** Superseded by 0052
 - **Date:** 2026-04-27
 - **Phase:** 4
 - **Relates to:** 0002, 0003, 0011, 0018, 0022

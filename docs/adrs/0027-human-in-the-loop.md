@@ -1,6 +1,6 @@
 # 0027 — Human-in-the-loop: approval steps and input requests
 
-- **Status:** Proposed
+- **Status:** Superseded by 0050
 - **Date:** 2026-04-27
 - **Deciders:** ork core team
 - **Phase:** 4

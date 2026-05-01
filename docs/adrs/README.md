@@ -1,6 +1,8 @@
 # ork Architecture Decision Records
 
-This directory contains the Architecture Decision Records (ADRs) that describe how the Rust `ork` workspace will evolve to reach feature parity with [Solace Agent Mesh (SAM)](https://github.com/SolaceLabs/solace-agent-mesh) without using the Solace broker, while keeping all agents compliant with the [Agent2Agent (A2A) protocol](https://github.com/google/a2a).
+This directory contains the Architecture Decision Records (ADRs) for the Rust `ork` workspace.
+
+ork is a **code-first agent platform** with an [A2A](https://github.com/google/a2a) wire surface. After [ADR 0048](0048-pivot-to-code-first-rig-platform.md) the platform is shaped after [Mastra](https://mastra.ai/docs) (developer-facing API: `OrkApp`-style central registry, typed workflows, code-first tools and agents, Studio, REST+SSE server) on top of [`rig-core`](https://docs.rs/rig-core/latest/rig/) as the per-agent engine ([ADR 0047](0047-rig-as-local-agent-engine.md)). The original parity target was [Solace Agent Mesh (SAM)](https://github.com/SolaceLabs/solace-agent-mesh) with Solace replaced by Kong + Kafka; ADRs 0001 – 0023 carry that history and the substrate they describe still ships.
 
 ADRs are immutable once accepted: subsequent decisions either supersede them or relate to them. To propose a change to an accepted decision, write a new ADR that supersedes it.
 
@@ -24,10 +26,12 @@ See [`0001-adr-process-and-conventions.md`](0001-adr-process-and-conventions.md)
 
 ## Cross-cutting principles
 
-- **A2A-first.** Every ork agent — local or remote — must satisfy the A2A protocol surface (cards, tasks, messages, parts, streaming, cancel, push). Tracked by [`0002`](0002-agent-port.md) and [`0003`](0003-a2a-protocol-model.md).
-- **No Solace.** SAM's broker-coupled pieces are remapped to **Kong** (HTTP/SSE) and **Kafka** (async/event mesh). The team's **DevPortal** is the registry / catalog surface that replaces Solace's `discovery/>` wildcards and a standalone Kong dev portal.
-- **MCP for external tools.** External systems flow through MCP servers (or, when no MCP server exists, through Kong-routed HTTP). Internal tools stay native Rust under [`ToolExecutor`](../../crates/ork-integrations/src/tools.rs).
-- **Backwards-compatible migration.** Every ADR identifies the load-bearing PR and the smallest viable next step. The full sequence lives in [`0023-migration-and-rollout-plan.md`](0023-migration-and-rollout-plan.md). (Historical context that seeded these ADRs lived in `future-a2a.md`, which has been retired now that the work is fully captured by the ADR set.)
+- **A2A-first.** Every ork agent — local or remote — must satisfy the A2A protocol surface (cards, tasks, messages, parts, streaming, cancel, push). Tracked by [`0002`](0002-agent-port.md) and [`0003`](0003-a2a-protocol-model.md). The code-first builder in [`0052`](0052-code-first-agent-dsl.md) produces values that satisfy this port automatically.
+- **Code-first composition.** A user assembles an ork application by registering typed agents, workflows, tools, and memory in a single Rust value (`OrkApp`, see [`0049`](0049-orkapp-central-registry.md)). The auto-generated REST + SSE surface (`/api/agents/:id`, `/api/workflows/:id`, see [`0056`](0056-auto-generated-rest-and-sse-surface.md)), Studio ([`0055`](0055-studio-local-dev-ui.md)), and `ork dev` ([`0057`](0057-ork-cli-dev-build-start.md)) all read off that value.
+- **rig as the per-agent engine.** Inside an agent, [`rig-core`](https://docs.rs/rig-core/latest/rig/) drives the LLM-and-tool dance; ork keeps the protocol layer (cards, tasks, federation) above it. See [`0047`](0047-rig-as-local-agent-engine.md), [`0052`](0052-code-first-agent-dsl.md).
+- **No Solace.** Sync traffic goes through **Kong** (HTTP/SSE), async through **Kafka**. The team's **DevPortal** is the registry / catalog surface that replaces Solace's `discovery/>` wildcards and a standalone Kong dev portal.
+- **MCP for external tools.** External systems flow through MCP servers (or, when no MCP server exists, through Kong-routed HTTP). Internal tools are typed Rust values built with the [`0051`](0051-code-first-tool-dsl.md) DSL on top of [`rig::tool::Tool`](https://docs.rs/rig-core/latest/rig/tool/index.html).
+- **Hexagonal boundaries.** Domain logic in `ork-core`, `ork-agents`, `ork-workflow`, `ork-tool`, `ork-memory`, `ork-eval` does not depend on `axum`, `sqlx`, `reqwest`, `rmcp`, or `rskafka` directly — adapters live in gateway-shaped crates (`ork-api`, `ork-studio`, `ork-webui`, `ork-persistence`, `ork-mcp`).
 
 ## Glossary
 
@@ -85,14 +89,15 @@ flowchart LR
 
 ## Phases
 
-The ADRs are grouped into four phases that mirror a sensible rollout order. Phase boundaries are encoded in the ADR numbering.
+The ADRs are grouped into phases that mirror a sensible rollout order. Phase boundaries are encoded in the ADR numbering, with one renumbering after the [`0048`](0048-pivot-to-code-first-rig-platform.md) pivot.
 
 | Phase | ADR range | Theme |
 | ----- | --------- | ----- |
-| 1 | 0001 – 0005 | Foundations: ADR process, `Agent` port, A2A model, hybrid transport, discovery |
-| 2 | 0006 – 0009 | Mesh capabilities: peer delegation, remote agent client, A2A server, push notifications |
-| 3 | 0010 – 0016 | External & extensibility: MCP, native tool calling, multi-LLM, gateways, plugins, embeds, artifacts |
-| 4 | 0017 – 0023 | Surfaces, security, ops: Web UI, DAG enhancements, scheduling, tenant security, RBAC, observability, rollout |
+| 1 | 0001 – 0009 | Foundations: ADR process, `Agent` port, A2A model, hybrid transport, discovery, peer delegation, remote agent client, A2A server, push notifications |
+| 2 | 0010 – 0017 | Substrate: MCP, native tool calling, multi-LLM router, generic gateways, embeds, artifacts, Web UI |
+| 3 | 0019 – 0023, 0034, 0047 | Production hardening: scheduling, security, RBAC, rollout, per-model profiles, rig as local-agent engine |
+| 4 | 0048 – 0057 | Code-first platform pivot: `OrkApp`, code-first DSLs (workflow, tool, agent), memory, scorers, Studio, REST+SSE server, `ork dev`/`build`/`start` CLI |
+| – | 0018, 0024 – 0033, 0035 – 0046 | Superseded — see Status column in the index below |
 
 ## Index
 
@@ -116,160 +121,196 @@ The ADRs are grouped into four phases that mirror a sensible rollout order. Phas
 | [0015](0015-dynamic-embeds.md) | Dynamic embeds | Implemented | 3 |
 | [0016](0016-artifact-storage.md) | Artifact / file-management service | Accepted | 3 |
 | [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Accepted | 4 |
-| [0018](0018-dag-executor-enhancements.md) | Workflow DAG executor enhancements | Proposed | 4 |
-| [0019](0019-scheduled-tasks.md) | Scheduled tasks | Proposed | 4 |
-| [0020](0020-tenant-security-and-trust.md) | Tenant security and A2A trust model | Proposed | 4 |
-| [0021](0021-rbac-scopes.md) | RBAC scopes for agents, tools, artifacts | Proposed | 4 |
-| [0022](0022-observability.md) | Observability: tracing, monitors, task event log | Proposed | 4 |
-| [0023](0023-migration-and-rollout-plan.md) | Migration and rollout plan | Proposed | 4 |
-| [0024](0024-wasm-plugin-system.md) | WASM-based plugin system | Proposed | 3 |
-| [0025](0025-typed-output-validation-and-verifier-agent.md) | Typed-output validation and verifier-agent port | Proposed | 4 |
-| [0026](0026-workflow-topology-selection-from-task-features.md) | Workflow topology selection from task features (classifier) | Proposed | 4 |
-| [0027](0027-human-in-the-loop.md) | Human-in-the-loop: approval steps and input requests | Proposed | 4 |
-| [0028](0028-shell-executor-and-test-runners.md) | Shell executor and test-runner integration | Proposed | 3 |
-| [0029](0029-workspace-file-editor.md) | Workspace file editor and patch application | Proposed | 4 |
-| [0030](0030-git-operations.md) | Git operations and worktree management | Proposed | 3 |
-| [0031](0031-transactional-code-changes.md) | Transactional code changes and rollback | Proposed | 4 |
-| [0032](0032-agent-memory-and-context-compaction.md) | Agent memory and context compaction | Proposed | 4 |
-| [0033](0033-coding-agent-personas.md) | Coding agent personas and solo reference | Proposed | 4 |
-| [0034](0034-per-model-capability-profiles.md) | Per-model capability profiles | Proposed | 4 |
-| [0035](0035-constrained-decoding.md) | Constrained decoding for tool calls | Proposed | 4 |
-| [0037](0037-lsp-diagnostics.md) | LSP diagnostics as a feedback source | Proposed | 4 |
-| [0038](0038-plan-mode-and-cross-verification.md) | Plan mode and A2A plan cross-verification | Proposed | 4 |
-| [0039](0039-agent-tool-call-hooks.md) | Agent tool-call hooks | Proposed | 4 |
-| [0040](0040-repo-map.md) | Repo map for code-aware context priming | Proposed | 4 |
-| [0041](0041-nested-workspaces.md) | Nested workspaces and sub-worktree coordination | Proposed | 4 |
-| [0042](0042-capability-discovery.md) | Capability-tagged agent discovery for coding teams | Proposed | 4 |
-| [0043](0043-team-shared-memory.md) | Team-scoped shared memory and decision log | Proposed | 4 |
-| [0044](0044-multi-agent-diff-aggregation.md) | Multi-agent transactional diff aggregation | Proposed | 4 |
-| [0045](0045-coding-team-orchestrator.md) | Coding team orchestrator (architect agent) | Proposed | 4 |
+| [0018](0018-dag-executor-enhancements.md) | Workflow DAG executor enhancements | Superseded by [0050](0050-code-first-workflow-dsl.md) | – |
+| [0019](0019-scheduled-tasks.md) | Scheduled tasks | Proposed | 3 |
+| [0020](0020-tenant-security-and-trust.md) | Tenant security and A2A trust model | Proposed | 3 |
+| [0021](0021-rbac-scopes.md) | RBAC scopes for agents, tools, artifacts | Proposed | 3 |
+| [0022](0022-observability.md) | Observability: tracing, monitors, task event log | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0023](0023-migration-and-rollout-plan.md) | Migration and rollout plan | Proposed | 3 |
+| [0024](0024-wasm-plugin-system.md) | WASM-based plugin system | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0025](0025-typed-output-validation-and-verifier-agent.md) | Typed-output validation and verifier-agent port | Superseded by [0052](0052-code-first-agent-dsl.md) | – |
+| [0026](0026-workflow-topology-selection-from-task-features.md) | Workflow topology selection from task features (classifier) | Superseded by [0050](0050-code-first-workflow-dsl.md) | – |
+| [0027](0027-human-in-the-loop.md) | Human-in-the-loop: approval steps and input requests | Superseded by [0050](0050-code-first-workflow-dsl.md) | – |
+| [0028](0028-shell-executor-and-test-runners.md) | Shell executor and test-runner integration | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0029](0029-workspace-file-editor.md) | Workspace file editor and patch application | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0030](0030-git-operations.md) | Git operations and worktree management | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0031](0031-transactional-code-changes.md) | Transactional code changes and rollback | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0032](0032-agent-memory-and-context-compaction.md) | Agent memory and context compaction | Superseded by [0053](0053-memory-working-and-semantic.md) | – |
+| [0033](0033-coding-agent-personas.md) | Coding agent personas and solo reference | Superseded by [0052](0052-code-first-agent-dsl.md) | – |
+| [0034](0034-per-model-capability-profiles.md) | Per-model capability profiles | Proposed | 3 |
+| [0035](0035-constrained-decoding.md) | Constrained decoding for tool calls | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0036](0036-per-step-model-assignment.md) | Per-step model assignment and cross-agent composition | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0037](0037-lsp-diagnostics.md) | LSP diagnostics as a feedback source | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0038](0038-plan-mode-and-cross-verification.md) | Plan mode and A2A plan cross-verification | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0039](0039-agent-tool-call-hooks.md) | Agent tool-call hooks | Superseded by [0052](0052-code-first-agent-dsl.md) | – |
+| [0040](0040-repo-map.md) | Repo map for code-aware context priming | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0041](0041-nested-workspaces.md) | Nested workspaces and sub-worktree coordination | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0042](0042-capability-discovery.md) | Capability-tagged agent discovery for coding teams | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0043](0043-team-shared-memory.md) | Team-scoped shared memory and decision log | Superseded by [0053](0053-memory-working-and-semantic.md) | – |
+| [0044](0044-multi-agent-diff-aggregation.md) | Multi-agent transactional diff aggregation | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0045](0045-coding-team-orchestrator.md) | Coding team orchestrator (architect agent) | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
+| [0046](0046-evaluation-harness-and-regression-corpus.md) | Evaluation harness and regression corpus | Superseded by [0054](0054-live-scorers-and-eval-corpus.md) | – |
+| [0047](0047-rig-as-local-agent-engine.md) | Adopt `rig-core` as the local-agent engine | Accepted | 3 |
+| [0048](0048-pivot-to-code-first-rig-platform.md) | Strategic pivot to a code-first platform on rig | Proposed | 4 |
+| [0049](0049-orkapp-central-registry.md) | `OrkApp` central registry: code-first project entry point | Proposed | 4 |
+| [0050](0050-code-first-workflow-dsl.md) | Code-first Workflow DSL with typed steps and suspend/resume | Proposed | 4 |
+| [0051](0051-code-first-tool-dsl.md) | Code-first Tool DSL on `rig::Tool` with typed Args/Output | Proposed | 4 |
+| [0052](0052-code-first-agent-dsl.md) | Code-first Agent DSL on `rig::Agent` with structured outputs | Proposed | 4 |
+| [0053](0053-memory-working-and-semantic.md) | Memory: working memory + semantic recall, threads and resources | Proposed | 4 |
+| [0054](0054-live-scorers-and-eval-corpus.md) | Live scorers and offline eval corpus | Proposed | 4 |
+| [0055](0055-studio-local-dev-ui.md) | Studio: local dev UI for chat, workflows, memory, traces, scorers | Proposed | 4 |
+| [0056](0056-auto-generated-rest-and-sse-surface.md) | Auto-generated REST + SSE server surface for agents and workflows | Proposed | 4 |
+| [0057](0057-ork-cli-dev-build-start.md) | `ork dev` / `ork build` / `ork start` CLI | Proposed | 4 |
 
 ## Decision graph
 
-The arrows below summarise each ADR's `Relates to` field. A → B means "A is a precondition or close collaborator of B". The migration sequence in [`0023`](0023-migration-and-rollout-plan.md) is one valid topological order over this graph.
+A → B means "A is a precondition or close collaborator of B". Superseded clusters (0018, 0024 – 0046 minus 0034) are omitted; their headers carry the explicit successor.
 
 ```mermaid
 flowchart LR
-  ADR0002[0002 Agent port] --> ADR0011[0011 LLM tool-calling]
-  ADR0002 --> ADR0006[0006 Peer delegation]
-  ADR0002 --> ADR0007[0007 Remote agent]
-  ADR0002 --> ADR0008[0008 A2A server]
-  ADR0002 --> ADR0010[0010 MCP plane]
-  ADR0002 --> ADR0012[0012 Multi-LLM]
-  ADR0002 --> ADR0013[0013 Gateways]
-  ADR0002 --> ADR0018[0018 DAG executor]
-  ADR0002 --> ADR0021[0021 RBAC]
-  ADR0003[0003 A2A model] --> ADR0007
+  subgraph foundations [Foundations 0001 – 0009]
+    ADR0002[0002 Agent port]
+    ADR0003[0003 A2A model]
+    ADR0004[0004 Hybrid transport]
+    ADR0005[0005 Discovery]
+    ADR0006[0006 Peer delegation]
+    ADR0007[0007 Remote agent]
+    ADR0008[0008 A2A server]
+    ADR0009[0009 Push]
+  end
+  subgraph substrate [Substrate 0010 – 0017]
+    ADR0010[0010 MCP plane]
+    ADR0011[0011 LLM tool-calling]
+    ADR0012[0012 Multi-LLM]
+    ADR0013[0013 Gateways]
+    ADR0015[0015 Embeds]
+    ADR0016[0016 Artifacts]
+    ADR0017[0017 Web UI]
+  end
+  subgraph hardening [Production hardening]
+    ADR0019[0019 Schedules]
+    ADR0020[0020 Security]
+    ADR0021[0021 RBAC]
+    ADR0023[0023 Rollout]
+    ADR0034[0034 Per-model profiles]
+    ADR0047[0047 rig engine]
+  end
+  subgraph platform [Code-first platform 0048 – 0057]
+    ADR0048[0048 Pivot]
+    ADR0049[0049 OrkApp]
+    ADR0050[0050 Workflow DSL]
+    ADR0051[0051 Tool DSL]
+    ADR0052[0052 Agent DSL]
+    ADR0053[0053 Memory]
+    ADR0054[0054 Scorers/evals]
+    ADR0055[0055 Studio]
+    ADR0056[0056 REST + SSE]
+    ADR0057[0057 CLI]
+  end
+
+  ADR0002 --> ADR0006
+  ADR0002 --> ADR0007
+  ADR0002 --> ADR0008
+  ADR0002 --> ADR0010
+  ADR0002 --> ADR0011
+  ADR0002 --> ADR0012
+  ADR0002 --> ADR0013
+  ADR0003 --> ADR0007
   ADR0003 --> ADR0008
-  ADR0003 --> ADR0009[0009 Push]
-  ADR0003 --> ADR0013
-  ADR0003 --> ADR0016[0016 Artifacts]
-  ADR0004[0004 Hybrid transport] --> ADR0005[0005 Discovery]
+  ADR0003 --> ADR0009
+  ADR0003 --> ADR0016
+  ADR0004 --> ADR0005
   ADR0004 --> ADR0008
   ADR0004 --> ADR0009
   ADR0005 --> ADR0007
-  ADR0005 --> ADR0019[0019 Schedules]
-  ADR0006 --> ADR0008
-  ADR0006 --> ADR0018
-  ADR0006 --> ADR0021
-  ADR0008 --> ADR0017[0017 Web UI]
-  ADR0008 --> ADR0019
-  ADR0008 --> ADR0022[0022 Observability]
-  ADR0010 --> ADR0024[0024 WASM plugins]
+  ADR0005 --> ADR0019
+
+  ADR0011 --> ADR0015
   ADR0010 --> ADR0021
-  ADR0011 --> ADR0015[0015 Embeds]
-  ADR0011 --> ADR0018
-  ADR0011 --> ADR0022
-  ADR0013 --> ADR0024
   ADR0013 --> ADR0017
-  ADR0013 --> ADR0021
-  ADR0024 --> ADR0023[0023 Rollout]
-  ADR0014[0014 Plugins - superseded] -.->|superseded by| ADR0024
-  ADR0015 --> ADR0017
   ADR0016 --> ADR0017
-  ADR0016 --> ADR0021
-  ADR0017 --> ADR0019
-  ADR0019 --> ADR0022
-  ADR0020[0020 Security] --> ADR0021
-  ADR0020 --> ADR0022
-  ADR0021 --> ADR0022
-  ADR0011 --> ADR0025[0025 Validation gate]
-  ADR0018 --> ADR0025
-  ADR0025 --> ADR0022
-  ADR0018 --> ADR0026[0026 Topology classifier]
-  ADR0006 --> ADR0026
-  ADR0025 --> ADR0026
-  ADR0026 --> ADR0022
-  ADR0003 --> ADR0027[0027 Human-in-the-loop]
-  ADR0008 --> ADR0027
-  ADR0009 --> ADR0027
-  ADR0017 --> ADR0027
-  ADR0018 --> ADR0027
-  ADR0019 --> ADR0027
-  ADR0021 --> ADR0027
-  ADR0025 --> ADR0027
-  ADR0027 --> ADR0022
-  ADR0011 --> ADR0028[0028 Shell executor]
-  ADR0010 --> ADR0028
-  ADR0016 --> ADR0028
-  ADR0020 --> ADR0028
-  ADR0028 --> ADR0021
-  ADR0028 --> ADR0025
-  ADR0027 --> ADR0031[0031 Transactional code changes]
-  ADR0028 --> ADR0031
-  ADR0029 --> ADR0031
-  ADR0030 --> ADR0031
-  ADR0016 --> ADR0031
-  ADR0018 --> ADR0031
-  ADR0031 --> ADR0022
-  ADR0011 --> ADR0032[0032 Agent memory and compaction]
-  ADR0003 --> ADR0032
-  ADR0012 --> ADR0032
-  ADR0020 --> ADR0032
-  ADR0032 --> ADR0022
-  ADR0031 --> ADR0044[0044 Multi-agent diff aggregation]
-  ADR0037[0037 LSP diagnostics] --> ADR0044
-  ADR0038[0038 Plan mode and cross-verification] --> ADR0044
-  ADR0041[0041 Nested workspaces] --> ADR0044
-  ADR0043[0043 Team-shared memory] --> ADR0044
-  ADR0044 --> ADR0022
-  ADR0033[0033 Coding personas] --> ADR0045[0045 Coding team orchestrator]
-  ADR0038 --> ADR0045
-  ADR0040[0040 Repo map] --> ADR0045
-  ADR0041 --> ADR0045
-  ADR0042[0042 Capability discovery] --> ADR0045
-  ADR0043 --> ADR0045
-  ADR0044 --> ADR0045
-  ADR0045 --> ADR0022
+  ADR0020 --> ADR0021
+  ADR0019 --> ADR0050
+
+  ADR0011 --> ADR0047
+  ADR0012 --> ADR0047
+  ADR0010 --> ADR0047
+
+  ADR0048 --> ADR0049
+  ADR0048 --> ADR0050
+  ADR0048 --> ADR0051
+  ADR0048 --> ADR0052
+  ADR0048 --> ADR0053
+  ADR0048 --> ADR0054
+  ADR0048 --> ADR0055
+  ADR0048 --> ADR0056
+  ADR0048 --> ADR0057
+
+  ADR0049 --> ADR0050
+  ADR0049 --> ADR0051
+  ADR0049 --> ADR0052
+  ADR0049 --> ADR0053
+  ADR0049 --> ADR0054
+  ADR0049 --> ADR0055
+  ADR0049 --> ADR0056
+  ADR0049 --> ADR0057
+
+  ADR0047 --> ADR0051
+  ADR0047 --> ADR0052
+  ADR0047 --> ADR0053
+  ADR0047 --> ADR0054
+
+  ADR0050 --> ADR0055
+  ADR0050 --> ADR0056
+  ADR0052 --> ADR0055
+  ADR0052 --> ADR0056
+  ADR0053 --> ADR0055
+  ADR0054 --> ADR0055
+  ADR0055 --> ADR0057
+  ADR0056 --> ADR0057
+
+  ADR0008 -.coexists.-> ADR0056
+  ADR0017 -.shares SSE encoder.-> ADR0056
+
+  ADR0014[0014 Plugins] -.superseded by.-> ADR0024[0024 WASM plugins]
+  ADR0024 -.superseded by.-> ADR0048
 ```
 
-## Mapping-to-SAM summary
+## Prior art / parity references summary
 
-Each ADR carries its own detailed `Mapping to SAM` section. The matrix below is the index of "what SAM concept does this ADR replace or restate?".
+Each ADR carries its own detailed `Prior art / parity references` section (or, for the older ADRs, a `Mapping to SAM` block). The matrix below is the index of "which external concept does this ADR restate, replace, or build on?".
 
-| ADR | Replaces / restates this SAM concept |
-| --- | ------------------------------------ |
-| [0002](0002-agent-port.md) | `SamAgentComponent`, `BaseAgentComponent` |
-| [0003](0003-a2a-protocol-model.md) | `common/a2a/types.py` |
-| [0004](0004-hybrid-kong-kafka-transport.md) | Solace topic plane in `common/a2a/protocol.py`, replaced by Kong + Kafka |
-| [0005](0005-agent-card-and-devportal-discovery.md) | `common/agent_registry.py`, agent card endpoints, `discovery/>` wildcards |
-| [0006](0006-peer-delegation.md) | `agent/tools/peer_agent_tool.py` |
-| [0007](0007-remote-a2a-agent-client.md) | SAM remote-agent equivalents, RPC client wrappers |
-| [0008](0008-a2a-server-endpoints.md) | SAM A2A endpoints + task lifecycle |
-| [0009](0009-push-notifications.md) | `common/utils/push_notification_auth.py` |
-| [0010](0010-mcp-tool-plane.md) | SAM `MCPToolset` and remote-tool plumbing |
-| [0011](0011-native-llm-tool-calling.md) | ADK-native tool calling inside `SamAgentComponent` |
-| [0012](0012-multi-llm-providers.md) | SAM litellm-style multi-provider config (handled out-of-process via Kong + GPUStack) |
-| [0013](0013-generic-gateway-abstraction.md) | `gateway/generic/component.py` |
-| [0014](0014-plugin-system.md) | (superseded by [0024](0024-wasm-plugin-system.md)) |
-| [0024](0024-wasm-plugin-system.md) | `sam plugin` SDK + plugin manifest, reframed as a WASM/wasmtime sandboxed runtime |
-| [0015](0015-dynamic-embeds.md) | SAM `«type:expression»` resolver pipeline |
-| [0016](0016-artifact-storage.md) | SAM `ArtifactService` + artifact tools |
-| [0017](0017-webui-chat-client.md) | SAM Web UI gateway (`client/webui/`) |
-| [0018](0018-dag-executor-enhancements.md) | `WorkflowExecutorComponent` + `DAGExecutor` |
-| [0019](0019-scheduled-tasks.md) | SAM scheduled-task surface |
-| [0020](0020-tenant-security-and-trust.md) | SAM tenant + trust assumptions, distributed across config |
-| [0021](0021-rbac-scopes.md) | SAM scope-string conventions checked at gateways |
-| [0022](0022-observability.md) | `agent/utils/monitors.py`, SAM logging + audit |
+| ADR | External concept restated / replaced / built on |
+| --- | ----------------------------------------------- |
+| [0002](0002-agent-port.md) | SAM `SamAgentComponent`, `BaseAgentComponent` |
+| [0003](0003-a2a-protocol-model.md) | A2A spec; SAM `common/a2a/types.py` |
+| [0004](0004-hybrid-kong-kafka-transport.md) | Solace topic plane → Kong + Kafka |
+| [0005](0005-agent-card-and-devportal-discovery.md) | SAM `common/agent_registry.py`; A2A agent-card discovery |
+| [0006](0006-peer-delegation.md) | SAM `agent/tools/peer_agent_tool.py` |
+| [0007](0007-remote-a2a-agent-client.md) | A2A remote-client; SAM RPC wrappers |
+| [0008](0008-a2a-server-endpoints.md) | A2A endpoints + task lifecycle |
+| [0009](0009-push-notifications.md) | A2A push-notification auth; SAM `push_notification_auth.py` |
+| [0010](0010-mcp-tool-plane.md) | MCP spec; SAM `MCPToolset` |
+| [0011](0011-native-llm-tool-calling.md) | OpenAI tool-calling spec; ADK-native tool calling |
+| [0012](0012-multi-llm-providers.md) | OpenAI-compatible `/v1/chat/completions`; LiteLLM (out-of-process) |
+| [0013](0013-generic-gateway-abstraction.md) | SAM `gateway/generic/component.py` |
+| [0015](0015-dynamic-embeds.md) | SAM `«type:expression»` resolver |
+| [0016](0016-artifact-storage.md) | SAM `ArtifactService` |
+| [0017](0017-webui-chat-client.md) | SAM Web UI gateway |
+| [0019](0019-scheduled-tasks.md) | SAM scheduled-task surface; Mastra workflow triggers |
+| [0020](0020-tenant-security-and-trust.md) | SAM tenant + trust assumptions |
+| [0021](0021-rbac-scopes.md) | SAM scope-string conventions |
 | [0023](0023-migration-and-rollout-plan.md) | n/a — process ADR |
+| [0034](0034-per-model-capability-profiles.md) | LiteLLM model-card metadata; rig provider clients |
+| [0047](0047-rig-as-local-agent-engine.md) | [`rig-core`](https://docs.rs/rig-core/latest/rig/) `AgentBuilder`, `Tool`, `Extractor` |
+| [0048](0048-pivot-to-code-first-rig-platform.md) | Mastra platform shape; rig engine |
+| [0049](0049-orkapp-central-registry.md) | Mastra `Mastra` class |
+| [0050](0050-code-first-workflow-dsl.md) | Mastra `createWorkflow` / `createStep`; LangGraph `StateGraph` |
+| [0051](0051-code-first-tool-dsl.md) | Mastra `createTool`; rig `rig::tool::Tool` |
+| [0052](0052-code-first-agent-dsl.md) | Mastra `Agent`; rig `AgentBuilder` + `Extractor` |
+| [0053](0053-memory-working-and-semantic.md) | Mastra Memory; LangGraph `Store` |
+| [0054](0054-live-scorers-and-eval-corpus.md) | Mastra evals + scorers; LangSmith datasets |
+| [0055](0055-studio-local-dev-ui.md) | Mastra Studio |
+| [0056](0056-auto-generated-rest-and-sse-surface.md) | Mastra Hono server (`/api/agents/:id`, `/api/workflows/:id`) |
+| [0057](0057-ork-cli-dev-build-start.md) | Mastra CLI (`mastra dev/build/start/init/eval`) |
 

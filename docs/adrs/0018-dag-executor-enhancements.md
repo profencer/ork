@@ -1,6 +1,6 @@
 # 0018 — Workflow DAG executor enhancements
 
-- **Status:** Proposed
+- **Status:** Superseded by 0050
 - **Date:** 2026-04-24
 - **Phase:** 4
 - **Relates to:** 0002, 0006, 0011, 0015, 0019, 0022

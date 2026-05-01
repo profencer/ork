@@ -96,6 +96,9 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
+# Local agent rig engine (ADR-0047)
+rig-core = { version = "0.36", default-features = false }
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

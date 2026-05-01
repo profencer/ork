@@ -1,6 +1,6 @@
 # 0022 — Observability: tracing, monitors, task event log
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-24
 - **Phase:** 4
 - **Relates to:** 0002, 0004, 0008, 0009, 0011, 0018, 0019, 0020, 0021

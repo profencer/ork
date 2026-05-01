@@ -1,6 +1,6 @@
 # 0030 — Git Operations & Worktree Management
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-28
 - **Deciders:** ork core team
 - **Phase:** 3

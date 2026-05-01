@@ -1,6 +1,6 @@
 # 0044 — Multi-agent transactional diff aggregation
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-29
 - **Deciders:** ork core team
 - **Phase:** 4

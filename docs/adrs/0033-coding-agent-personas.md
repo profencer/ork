@@ -1,6 +1,6 @@
 # 0033 — Coding agent personas and solo reference
 
-- **Status:** Proposed
+- **Status:** Superseded by 0052
 - **Date:** 2026-04-28
 - **Deciders:** ork core
 - **Phase:** 4

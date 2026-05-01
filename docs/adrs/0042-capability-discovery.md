@@ -1,6 +1,6 @@
 # 0042 — Capability-tagged agent discovery for coding teams
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-28
 - **Deciders:** ork core
 - **Phase:** 4

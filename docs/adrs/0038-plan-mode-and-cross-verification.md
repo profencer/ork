@@ -1,6 +1,6 @@
 # 0038 — Plan mode and A2A plan cross-verification
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-28
 - **Deciders:** ork core
 - **Phase:** 4

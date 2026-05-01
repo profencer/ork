@@ -1,6 +1,6 @@
 # 0024 — WASM-based plugin system
 
-- **Status:** Proposed
+- **Status:** Superseded by 0048
 - **Date:** 2026-04-26
 - **Phase:** 3
 - **Relates to:** 0010, 0011, 0013, 0014, 0015, 0021, 0023
