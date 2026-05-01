@@ -1,10 +1,12 @@
 //! [`OrkAppBuilder`](OrkAppBuilder): central registry wiring (ADR [`0049`](../../docs/adrs/0049-orkapp-central-registry.md)).
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
 use ork_common::error::OrkError;
+use ork_core::agent_registry::AgentRegistry;
 use ork_core::ports::agent::Agent;
 use ork_core::ports::id_generator::IdGenerator;
 use ork_core::ports::kv_storage::KvStorage;
@@ -12,6 +14,8 @@ use ork_core::ports::memory_store::MemoryStore;
 use ork_core::ports::tool_def::ToolDef;
 use ork_core::ports::vector_store::VectorStore;
 use ork_core::ports::workflow_def::WorkflowDef;
+use ork_core::ports::workflow_snapshot::WorkflowSnapshotStore;
+use ork_workflow::ProgramOp;
 use serde_json::Value;
 
 use crate::app::OrkApp;
@@ -34,6 +38,8 @@ fn cfg(message: impl Into<String>) -> OrkError {
 pub struct OrkAppBuilder {
     agents: Vec<Arc<dyn Agent>>,
     workflows: Vec<Arc<dyn WorkflowDef>>,
+    code_first_programs: HashMap<String, Arc<Vec<ProgramOp>>>,
+    snapshot_store: Option<Arc<dyn WorkflowSnapshotStore>>,
     tools: Vec<Arc<dyn ToolDef>>,
     mcp_servers: Vec<(String, McpServerSpec)>,
     memory: Option<Arc<dyn MemoryStore>>,
@@ -57,8 +63,18 @@ impl OrkAppBuilder {
     }
 
     /// Registers a code-first workflow (ADR [`0050`](../../docs/adrs/0050-code-first-workflow-dsl.md)).
-    pub fn workflow<W: WorkflowDef + 'static>(mut self, w: W) -> Self {
+    pub fn workflow<W: WorkflowDef + Any + 'static>(mut self, w: W) -> Self {
+        if let Some(cf) = (&w as &dyn Any).downcast_ref::<ork_workflow::Workflow>() {
+            self.code_first_programs
+                .insert(cf.id().to_string(), cf.program_arc());
+        }
         self.workflows.push(Arc::new(w));
+        self
+    }
+
+    /// Optional store for suspend/resume snapshots (ADR-0050).
+    pub fn snapshot_store(mut self, store: Arc<dyn WorkflowSnapshotStore>) -> Self {
+        self.snapshot_store = Some(store);
         self
     }
 
@@ -209,9 +225,13 @@ impl OrkAppBuilder {
         }
 
         let built_at = Utc::now();
+        let agent_registry = Arc::new(AgentRegistry::from_agents(agents.values().cloned()));
         let inner = Arc::new(OrkAppInner {
             agents,
+            agent_registry,
             workflows,
+            code_first_programs: self.code_first_programs,
+            snapshot_store: self.snapshot_store,
             tools,
             mcp_servers,
             memory: self.memory,

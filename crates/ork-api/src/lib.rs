@@ -13,5 +13,6 @@ pub mod llm_catalog;
 pub mod middleware;
 pub mod remote_agents;
 pub mod routes;
+pub mod sse;
 pub mod sse_buffer;
 pub mod state;

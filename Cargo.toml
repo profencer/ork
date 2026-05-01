@@ -4,6 +4,7 @@ members = [
     "crates/ork-a2a",
     "crates/ork-api",
     "crates/ork-app",
+    "crates/ork-workflow",
     "crates/ork-cli",
     "crates/ork-core",
     "crates/ork-agents",
@@ -52,6 +53,7 @@ ork-push = { path = "crates/ork-push" }
 ork-server = { path = "crates/ork-server" }
 ork-storage = { path = "crates/ork-storage" }
 ork-webui = { path = "crates/ork-webui" }
+ork-workflow = { path = "crates/ork-workflow" }
 
 # Web framework
 axum = "0.8"
@@ -65,6 +67,8 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+schemars = { version = "0.8", features = ["derive"] }
+jsonschema = "0.26"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }

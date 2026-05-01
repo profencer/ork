@@ -1,6 +1,6 @@
 # 0050 — Code-first Workflow DSL with typed steps and suspend/resume
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -435,7 +435,10 @@ resolve (timezone, retry on missed window, dedupe-by-fired-at).
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Critical | Process-level `resume_on_startup` must not replay snapshots with a synthetic `AgentContext` + `resume: null` (breaks faithful HITL resume). | **Fixed in-session** by logging pending rows only; full replay deferred to follow-up (wire explicit resume or rehydrate suspended handles). |
+| Major | `WorkflowRunHandle` uses `subscribe_events()` vs ADR’s `events()` naming; no HTTP route mounts workflow SSE yet. | **Deferred** to ADR 0056 (encoder shipped in `ork-api::sse::workflow`). |
+| Major | `Trigger::cron(expr, tz)` previously dropped `tz`. | **Mitigated:** warn when `tz` is not `UTC`; evaluation remains UTC until timezone support lands. |
+| Minor | YAML compat drops legacy template trigger metadata (`trigger: None`). | **Recorded:** shim is execution-focused; cron from YAML templates not preserved on `Workflow`. |
 
 ## Prior art / parity references
 

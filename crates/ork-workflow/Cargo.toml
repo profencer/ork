@@ -1,22 +1,26 @@
 [package]
-name = "ork-app"
+name = "ork-workflow"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 async-trait.workspace = true
 chrono = { workspace = true, features = ["serde"] }
+cron.workspace = true
 futures.workspace = true
+jsonschema.workspace = true
 ork-common.workspace = true
 ork-core.workspace = true
-ork-workflow.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync", "macros", "net", "time", "rt"] }
+serde_yaml.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
+tokio-stream.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 ork-a2a.workspace = true
-ork-server.workspace = true
-proptest.workspace = true
+tokio = { workspace = true, features = ["full"] }

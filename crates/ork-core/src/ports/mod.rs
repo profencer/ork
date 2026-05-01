@@ -19,4 +19,7 @@ pub mod vector_store;
 pub mod webui_project_repo;
 pub mod webui_store;
 pub mod workflow_def;
+pub mod workflow_run;
+pub mod workflow_snapshot;
+pub mod workflow_snapshot_memory;
 pub mod workspace;

@@ -6,3 +6,4 @@ pub mod scheduler;
 pub mod template;
 
 pub use noop_workflow_repository::NoopWorkflowRepository;
+pub use template::resolve_template;

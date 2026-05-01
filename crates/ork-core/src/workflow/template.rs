@@ -27,7 +27,7 @@ pub(crate) fn strip_json_fence(s: &str) -> &str {
     s
 }
 
-pub(crate) fn resolve_template(
+pub fn resolve_template(
     template: &str,
     step_outputs: &HashMap<String, String>,
     workflow_input: &Value,

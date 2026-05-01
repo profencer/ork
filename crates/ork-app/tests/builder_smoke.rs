@@ -9,6 +9,7 @@ use ork_core::a2a::{AgentContext, AgentEvent, AgentMessage};
 use ork_core::ports::agent::{Agent, AgentEventStream};
 use ork_core::ports::tool_def::ToolDef;
 use ork_core::ports::workflow_def::WorkflowDef;
+use ork_core::ports::workflow_run::{ImmediateWorkflowRunHandle, WorkflowRunDeps};
 use serde_json::{Value, json};
 
 struct MockTool {
@@ -64,8 +65,12 @@ impl WorkflowDef for MockWorkflow {
         &'a self,
         _ctx: AgentContext,
         input: Value,
-    ) -> futures::future::BoxFuture<'a, Result<Value, OrkError>> {
-        Box::pin(async move { Ok(input) })
+        _deps: WorkflowRunDeps,
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<ork_core::ports::workflow_run::WorkflowRunHandle, OrkError>,
+    > {
+        Box::pin(async move { Ok(ImmediateWorkflowRunHandle::completed(input)) })
     }
 }
 
@@ -146,6 +151,7 @@ fn build_lists_agents_workflows_tools_in_manifest() {
             port: 0,
             tls: None,
             auth: None,
+            resume_on_startup: false,
         })
         .build()
         .expect("build ok");

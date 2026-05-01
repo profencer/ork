@@ -33,6 +33,9 @@ pub struct ServerConfig {
     pub tls: Option<TlsConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthConfig>,
+    /// When true, [`crate::OrkApp::serve`] replays pending workflow snapshots (ADR-0050).
+    #[serde(default)]
+    pub resume_on_startup: bool,
 }
 
 impl Default for ServerConfig {
@@ -42,6 +45,7 @@ impl Default for ServerConfig {
             port: 8080,
             tls: None,
             auth: None,
+            resume_on_startup: false,
         }
     }
 }

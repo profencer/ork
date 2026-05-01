@@ -11,6 +11,7 @@ use ork_core::ports::memory_store::MemoryStore;
 use ork_core::ports::tool_def::ToolDef;
 use ork_core::ports::vector_store::VectorStore;
 use ork_core::ports::workflow_def::WorkflowDef;
+use ork_core::ports::workflow_run::{ImmediateWorkflowRunHandle, WorkflowRunDeps};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
@@ -57,8 +58,12 @@ impl WorkflowDef for MockWf {
         &'a self,
         _ctx: ork_core::a2a::AgentContext,
         input: Value,
-    ) -> futures::future::BoxFuture<'a, Result<Value, OrkError>> {
-        Box::pin(async move { Ok(input) })
+        _deps: WorkflowRunDeps,
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<ork_core::ports::workflow_run::WorkflowRunHandle, OrkError>,
+    > {
+        Box::pin(async move { Ok(ImmediateWorkflowRunHandle::completed(input)) })
     }
 }
 
@@ -265,6 +270,7 @@ fn manifest_roundtrip_with_optionals() {
             port: 3000,
             tls: None,
             auth: Some(ork_app::types::AuthConfig { mode: "jwt".into() }),
+            resume_on_startup: false,
         })
         .build()
         .expect("build");

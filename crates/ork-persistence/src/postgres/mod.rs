@@ -6,6 +6,7 @@ pub mod artifact_meta_repo;
 pub mod tenant_repo;
 pub mod webui_store;
 pub mod workflow_repo;
+pub mod workflow_snapshot_repo;
 
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
