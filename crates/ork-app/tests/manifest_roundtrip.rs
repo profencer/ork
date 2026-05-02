@@ -1,5 +1,4 @@
-//! `AppManifest` JSON round-trip (ADR [`0049`](../../../docs/adrs/0049-orkapp-central-registry.md)).
-
+use async_trait::async_trait;
 use ork_a2a::{AgentCapabilities, AgentCard};
 use ork_app::OrkApp;
 use ork_app::types::{
@@ -22,6 +21,7 @@ struct MockTool {
     so: Value,
 }
 
+#[async_trait]
 impl ToolDef for MockTool {
     fn id(&self) -> &str {
         &self.id
@@ -34,6 +34,14 @@ impl ToolDef for MockTool {
     }
     fn output_schema(&self) -> &Value {
         &self.so
+    }
+
+    async fn invoke(
+        &self,
+        _ctx: &ork_core::a2a::AgentContext,
+        input: &Value,
+    ) -> Result<Value, OrkError> {
+        Ok(input.clone())
     }
 }
 

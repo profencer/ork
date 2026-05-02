@@ -6,6 +6,8 @@ pub mod artifact_wire;
 pub mod code_tools;
 pub mod github;
 pub mod gitlab;
+pub mod native_tool_defs;
+pub mod tool_plane;
 pub mod tools;
 pub mod workspace;
 

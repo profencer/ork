@@ -39,7 +39,7 @@ use ork_core::ports::llm::{
 };
 use ork_core::workflow::NoopWorkflowRepository;
 use ork_core::workflow::compiler;
-use ork_core::workflow::engine::{ToolExecutor, WorkflowEngine};
+use ork_core::workflow::engine::WorkflowEngine;
 use tokio::sync::Mutex;
 
 /// Recording [`LlmProvider`] that captures every [`ChatRequest`] it
@@ -78,20 +78,6 @@ impl LlmProvider for RecordingLlm {
 
     fn provider_name(&self) -> &str {
         "recording"
-    }
-}
-
-struct NoopTools;
-
-#[async_trait]
-impl ToolExecutor for NoopTools {
-    async fn execute(
-        &self,
-        _ctx: &ork_core::a2a::AgentContext,
-        _tool_name: &str,
-        _input: &serde_json::Value,
-    ) -> Result<serde_json::Value, OrkError> {
-        unreachable!("the test workflow declares no tools")
     }
 }
 
@@ -157,7 +143,6 @@ async fn workflow_step_overrides_shadow_agent_config() {
         agent_config_with_provider_and_model("agent-only", "agent-model"),
         &CardEnrichmentContext::minimal(),
         llm.clone() as Arc<dyn LlmProvider>,
-        Arc::new(NoopTools),
     );
     let registry = AgentRegistry::from_agents(vec![Arc::new(agent) as Arc<dyn Agent>]);
     let engine = WorkflowEngine::new(Arc::new(NoopWorkflowRepository), Arc::new(registry));
@@ -218,7 +203,6 @@ async fn agent_config_provider_used_when_step_has_none() {
         agent_config_with_provider_and_model("agent-only", "agent-model"),
         &CardEnrichmentContext::minimal(),
         llm.clone() as Arc<dyn LlmProvider>,
-        Arc::new(NoopTools),
     );
     let registry = AgentRegistry::from_agents(vec![Arc::new(agent) as Arc<dyn Agent>]);
     let engine = WorkflowEngine::new(Arc::new(NoopWorkflowRepository), Arc::new(registry));

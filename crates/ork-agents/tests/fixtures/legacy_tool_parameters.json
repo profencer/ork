@@ -1,0 +1,160 @@
+{
+  "agent_call": {
+    "type": "object",
+    "properties": {
+      "agent": { "type": "string" },
+      "prompt": { "type": "string" },
+      "data": { "type": "object" },
+      "await": { "type": "boolean" },
+      "stream": { "type": "boolean" }
+    },
+    "required": ["agent", "prompt"]
+  },
+  "append_artifact": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "data": { "type": "string" },
+      "mime": { "type": "string" }
+    },
+    "required": ["name", "data"]
+  },
+  "artifact_meta": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "version": { "type": "integer" }
+    },
+    "required": ["name"]
+  },
+  "code_search": {
+    "type": "object",
+    "properties": {
+      "repo": { "type": "string" },
+      "query": { "type": "string" },
+      "top_k": { "type": "integer", "minimum": 1, "maximum": 100 }
+    },
+    "required": ["repo", "query"]
+  },
+  "create_artifact": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "mime": { "type": "string" },
+      "data": { "type": "string" },
+      "labels": { "type": "object" }
+    },
+    "required": ["name", "data"]
+  },
+  "delete_artifact": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "version": { "type": ["integer", "string"] }
+    },
+    "required": ["name"]
+  },
+  "github_merged_prs": {
+    "type": "object",
+    "properties": {
+      "owner": { "type": "string" },
+      "repo": { "type": "string" },
+      "from_tag": { "type": "string" },
+      "to_tag": { "type": "string" }
+    },
+    "required": ["from_tag", "to_tag"]
+  },
+  "github_pipelines": {
+    "type": "object",
+    "properties": {
+      "owner": { "type": "string" },
+      "repo": { "type": "string" }
+    }
+  },
+  "github_recent_activity": {
+    "type": "object",
+    "properties": {
+      "owner": { "type": "string" },
+      "repo": { "type": "string" }
+    }
+  },
+  "gitlab_merged_prs": {
+    "type": "object",
+    "properties": {
+      "owner": { "type": "string" },
+      "repo": { "type": "string" },
+      "from_tag": { "type": "string" },
+      "to_tag": { "type": "string" }
+    },
+    "required": ["from_tag", "to_tag"]
+  },
+  "gitlab_pipelines": {
+    "type": "object",
+    "properties": {
+      "owner": { "type": "string" },
+      "repo": { "type": "string" }
+    }
+  },
+  "gitlab_recent_activity": {
+    "type": "object",
+    "properties": {
+      "owner": { "type": "string" },
+      "repo": { "type": "string" }
+    }
+  },
+  "list_artifacts": {
+    "type": "object",
+    "properties": {
+      "prefix": { "type": "string" },
+      "label": { "type": "string" },
+      "value": { "type": "string" }
+    }
+  },
+  "list_repos": {
+    "type": "object",
+    "properties": {}
+  },
+  "list_tree": {
+    "type": "object",
+    "properties": {
+      "repo": { "type": "string" },
+      "prefix": { "type": "string" },
+      "max_entries": { "type": "integer", "minimum": 1 }
+    },
+    "required": ["repo"]
+  },
+  "load_artifact": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "version": { "type": "integer" },
+      "max_inline_bytes": { "type": "integer" }
+    },
+    "required": ["name"]
+  },
+  "peer_prompt_data": {
+    "type": "object",
+    "properties": {
+      "prompt": { "type": "string" },
+      "data": { "type": "object" }
+    },
+    "required": ["prompt"]
+  },
+  "pin_artifact": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "version": { "type": "integer" }
+    },
+    "required": ["name"]
+  },
+  "read_file": {
+    "type": "object",
+    "properties": {
+      "repo": { "type": "string" },
+      "path": { "type": "string" },
+      "max_bytes": { "type": "integer", "minimum": 1 }
+    },
+    "required": ["repo", "path"]
+  }
+}

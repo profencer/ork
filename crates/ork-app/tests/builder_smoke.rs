@@ -1,5 +1,6 @@
 //! Builder validation and manifest introspection smoke tests.
 
+use async_trait::async_trait;
 use futures::stream;
 use ork_a2a::{AgentCapabilities, AgentCard};
 use ork_app::OrkApp;
@@ -19,6 +20,7 @@ struct MockTool {
     schema_out: Value,
 }
 
+#[async_trait]
 impl ToolDef for MockTool {
     fn id(&self) -> &str {
         self.id.as_str()
@@ -34,6 +36,10 @@ impl ToolDef for MockTool {
 
     fn output_schema(&self) -> &Value {
         &self.schema_out
+    }
+
+    async fn invoke(&self, _ctx: &AgentContext, input: &Value) -> Result<Value, OrkError> {
+        Ok(input.clone())
     }
 }
 

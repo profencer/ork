@@ -4,7 +4,6 @@ use ork_core::a2a::card_builder::CardEnrichmentContext;
 use ork_core::models::agent::AgentConfig;
 use ork_core::ports::agent::Agent;
 use ork_core::ports::llm::LlmProvider;
-use ork_core::workflow::engine::ToolExecutor;
 
 use crate::local::LocalAgent;
 use crate::tool_catalog::ToolCatalogBuilder;
@@ -183,29 +182,27 @@ Prefer structured JSON when the workflow requests it."#
 pub fn seed_local_agents(
     card_ctx: &CardEnrichmentContext,
     llm: Arc<dyn LlmProvider>,
-    tools: Arc<dyn ToolExecutor>,
     tool_catalog: ToolCatalogBuilder,
 ) -> Vec<Arc<dyn Agent>> {
     vec![
         Arc::new(
-            LocalAgent::new(planner_config(), card_ctx, llm.clone(), tools.clone())
+            LocalAgent::new(planner_config(), card_ctx, llm.clone())
                 .with_tool_catalog(tool_catalog.clone()),
         ),
         Arc::new(
-            LocalAgent::new(researcher_config(), card_ctx, llm.clone(), tools.clone())
+            LocalAgent::new(researcher_config(), card_ctx, llm.clone())
                 .with_tool_catalog(tool_catalog.clone()),
         ),
         Arc::new(
-            LocalAgent::new(writer_config(), card_ctx, llm.clone(), tools.clone())
+            LocalAgent::new(writer_config(), card_ctx, llm.clone())
                 .with_tool_catalog(tool_catalog.clone()),
         ),
         Arc::new(
-            LocalAgent::new(reviewer_config(), card_ctx, llm.clone(), tools.clone())
+            LocalAgent::new(reviewer_config(), card_ctx, llm.clone())
                 .with_tool_catalog(tool_catalog.clone()),
         ),
         Arc::new(
-            LocalAgent::new(synthesizer_config(), card_ctx, llm, tools)
-                .with_tool_catalog(tool_catalog),
+            LocalAgent::new(synthesizer_config(), card_ctx, llm).with_tool_catalog(tool_catalog),
         ),
     ]
 }

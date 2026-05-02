@@ -19,7 +19,7 @@ use ork_core::ports::llm::{
     ChatMessage, ChatRequest, ChatStreamEvent, LlmProvider, MessageRole, ToolCall as OrkToolCall,
     ToolChoice as OrkToolChoice, ToolDescriptor,
 };
-use ork_core::workflow::engine::ToolExecutor;
+use ork_core::ports::tool_def::ToolDef;
 use rig::agent::{AgentBuilder, MultiTurnStreamItem, StreamingError, StreamingResult};
 use rig::completion::message::{
     AssistantContent as RigAssistantContent, Text as RigText, ToolCall as RigAssistantToolCall,
@@ -120,25 +120,6 @@ pub(crate) async fn try_spill_oversized_tool_result(
     serde_json::to_string(&v).ok()
 }
 
-pub(crate) fn is_fatal_tool_error(err: &OrkError) -> bool {
-    match err {
-        OrkError::Workflow(_)
-        | OrkError::Internal(_)
-        | OrkError::Database(_)
-        | OrkError::Configuration { .. } => true,
-        OrkError::NotFound(_)
-        | OrkError::Unauthorized(_)
-        | OrkError::Forbidden(_)
-        | OrkError::Validation(_)
-        | OrkError::Conflict(_)
-        | OrkError::LlmProvider(_)
-        | OrkError::Integration(_)
-        | OrkError::Unsupported(_)
-        | OrkError::A2aClient(..)
-        | OrkError::A2aStreamLost(_) => false,
-    }
-}
-
 pub(crate) fn tool_error_payload(
     call_name: &str,
     err: &OrkError,
@@ -176,8 +157,7 @@ pub(crate) fn status_update_text(
 }
 
 pub(crate) struct OrkToolDyn {
-    pub(crate) descriptor: ToolDescriptor,
-    pub(crate) tools: Arc<dyn ToolExecutor>,
+    pub(crate) tool: Arc<dyn ToolDef>,
     pub(crate) ctx: AgentContext,
     pub(crate) fatal: FatalSlot,
     pub(crate) semaphore: Arc<Semaphore>,
@@ -186,7 +166,7 @@ pub(crate) struct OrkToolDyn {
 
 impl ToolDyn for OrkToolDyn {
     fn name(&self) -> String {
-        self.descriptor.name.clone()
+        self.tool.id().to_string()
     }
 
     fn definition<'f>(
@@ -194,9 +174,9 @@ impl ToolDyn for OrkToolDyn {
         _prompt: String,
     ) -> rig::wasm_compat::WasmBoxedFuture<'f, RigToolDefinition> {
         let d = RigToolDefinition {
-            name: self.descriptor.name.clone(),
-            description: self.descriptor.description.clone(),
-            parameters: self.descriptor.parameters.clone(),
+            name: self.tool.id().to_string(),
+            description: self.tool.description().to_string(),
+            parameters: self.tool.input_schema().clone(),
         };
         Box::pin(async move { d })
     }
@@ -205,14 +185,15 @@ impl ToolDyn for OrkToolDyn {
         &'f self,
         args: String,
     ) -> rig::wasm_compat::WasmBoxedFuture<'f, Result<String, RigToolError>> {
-        let tools = self.tools.clone();
+        let tool = self.tool.clone();
         let ctx = self.ctx.clone();
         let semaphore = self.semaphore.clone();
         let fatal = self.fatal.clone();
-        let descriptor = self.descriptor.clone();
         let max = self.max_tool_result_bytes;
 
         Box::pin(async move {
+            let call_name = tool.id().to_string();
+
             if ctx.cancel.is_cancelled() {
                 fatal.set("agent task cancelled".into());
                 return Err(RigToolError::ToolCallError(Box::new(IoError::new(
@@ -225,7 +206,7 @@ impl ToolDyn for OrkToolDyn {
                 Ok(v) => v,
                 Err(e) => {
                     return Ok(tool_error_payload(
-                        &descriptor.name,
+                        &call_name,
                         &OrkError::Validation(e.to_string()),
                         max,
                     ));
@@ -244,7 +225,7 @@ impl ToolDyn for OrkToolDyn {
                 ))));
             }
 
-            match tools.execute(&ctx, &descriptor.name, &parsed).await {
+            match tool.invoke(&ctx, &parsed).await {
                 Ok(out) => match serde_json::to_string(&out) {
                     Ok(serialized) => {
                         if serialized.len() > max {
@@ -261,9 +242,7 @@ impl ToolDyn for OrkToolDyn {
                     }
                     Err(e) => Err(RigToolError::JsonError(e)),
                 },
-                Err(e) if !is_fatal_tool_error(&e) => {
-                    Ok(tool_error_payload(&descriptor.name, &e, max))
-                }
+                Err(e) if !tool.is_fatal(&e) => Ok(tool_error_payload(&call_name, &e, max)),
                 Err(e) => {
                     fatal.set(e.to_string());
                     ctx.cancel.cancel();
@@ -625,8 +604,7 @@ impl RigEngine {
         ctx: AgentContext,
         config: AgentConfig,
         llm: Arc<dyn LlmProvider>,
-        tools: Arc<dyn ToolExecutor>,
-        tool_descriptors: Vec<ToolDescriptor>,
+        tool_defs: Vec<Arc<dyn ToolDef>>,
         prompt: ChatMessage,
         history_seed: Vec<ChatMessage>,
     ) -> Result<AgentEventStream, OrkError> {
@@ -664,10 +642,9 @@ impl RigEngine {
         let semaphore = Arc::new(Semaphore::new(config.max_parallel_tool_calls.max(1)));
 
         let mut rig_tools = Vec::<Box<dyn ToolDyn>>::new();
-        for d in tool_descriptors.clone() {
+        for def in tool_defs {
             rig_tools.push(Box::new(OrkToolDyn {
-                descriptor: d,
-                tools: tools.clone(),
+                tool: def,
                 ctx: ctx.clone(),
                 fatal: fatal.clone(),
                 semaphore: semaphore.clone(),

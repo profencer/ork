@@ -9,6 +9,7 @@ chrono = { workspace = true, features = ["serde"] }
 futures.workspace = true
 ork-common.workspace = true
 ork-core.workspace = true
+ork-tool = { workspace = true }
 ork-workflow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -17,6 +18,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 ork-a2a.workspace = true
 ork-server.workspace = true
 proptest.workspace = true

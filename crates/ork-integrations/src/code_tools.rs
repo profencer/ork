@@ -3,7 +3,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use ork_common::error::OrkError;
 use ork_core::a2a::AgentContext;
-use ork_core::ports::llm::ToolDescriptor;
 use ork_core::ports::workspace::RepoWorkspace;
 use ork_core::workflow::engine::ToolExecutor;
 use serde_json::{Value, json};
@@ -19,63 +18,6 @@ pub struct CodeToolExecutor {
 impl CodeToolExecutor {
     pub fn new(workspace: Arc<GitRepoWorkspace>) -> Self {
         Self { workspace }
-    }
-
-    pub fn is_code_tool(name: &str) -> bool {
-        matches!(
-            name,
-            "list_repos" | "code_search" | "read_file" | "list_tree"
-        )
-    }
-
-    #[must_use]
-    pub fn descriptors() -> Vec<ToolDescriptor> {
-        vec![
-            ToolDescriptor {
-                name: "list_repos".into(),
-                description: "List configured source repositories available to this tenant.".into(),
-                parameters: json!({"type":"object","properties":{}}),
-            },
-            ToolDescriptor {
-                name: "code_search".into(),
-                description: "Search repository contents with ripgrep-style text search.".into(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "repo": {"type": "string"},
-                        "query": {"type": "string"},
-                        "top_k": {"type": "integer", "minimum": 1, "maximum": 100}
-                    },
-                    "required": ["repo", "query"]
-                }),
-            },
-            ToolDescriptor {
-                name: "read_file".into(),
-                description: "Read a file from a configured repository clone.".into(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "repo": {"type": "string"},
-                        "path": {"type": "string"},
-                        "max_bytes": {"type": "integer", "minimum": 1}
-                    },
-                    "required": ["repo", "path"]
-                }),
-            },
-            ToolDescriptor {
-                name: "list_tree".into(),
-                description: "List paths under a repository prefix.".into(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "repo": {"type": "string"},
-                        "prefix": {"type": "string"},
-                        "max_entries": {"type": "integer", "minimum": 1}
-                    },
-                    "required": ["repo"]
-                }),
-            },
-        ]
     }
 }
 

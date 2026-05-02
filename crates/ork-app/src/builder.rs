@@ -15,6 +15,7 @@ use ork_core::ports::tool_def::ToolDef;
 use ork_core::ports::vector_store::VectorStore;
 use ork_core::ports::workflow_def::WorkflowDef;
 use ork_core::ports::workflow_snapshot::WorkflowSnapshotStore;
+use ork_tool::IntoToolDef;
 use ork_workflow::ProgramOp;
 use serde_json::Value;
 
@@ -78,8 +79,14 @@ impl OrkAppBuilder {
         self
     }
 
-    pub fn tool<T: ToolDef + 'static>(mut self, t: T) -> Self {
-        self.tools.push(Arc::new(t));
+    pub fn tool(mut self, t: impl IntoToolDef) -> Self {
+        self.tools.push(t.into_tool_def());
+        self
+    }
+
+    /// Register a type-erased tool (e.g. from a shared [`Arc`](std::sync::Arc)).
+    pub fn tool_dyn(mut self, t: Arc<dyn ToolDef>) -> Self {
+        self.tools.push(t);
         self
     }
 

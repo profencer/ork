@@ -82,6 +82,42 @@ async fn branch_first_matching_arm_runs() {
 }
 
 #[tokio::test]
+async fn parallel_runs_arms_concurrently() {
+    let w = workflow("wf-par-conc")
+        .input::<Value>()
+        .output::<Value>()
+        .parallel(vec![
+            AnyStep::from_step(step("slow-a").input::<Value>().output::<Value>().execute(
+                |_, _| async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Ok(StepOutcome::Done(json!(1)))
+                },
+            )),
+            AnyStep::from_step(step("slow-b").input::<Value>().output::<Value>().execute(
+                |_, _| async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Ok(StepOutcome::Done(json!(2)))
+                },
+            )),
+        ])
+        .commit();
+    let start = tokio::time::Instant::now();
+    let h = w.run(root_ctx(), json!(null), deps()).await.expect("run");
+    let out = h.await_done().await.expect("done");
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(195),
+        "parallel arms should overlap (~100ms); sequential would be ~200ms+, got {elapsed:?}"
+    );
+    match out {
+        ork_core::ports::workflow_run::RunState::Completed { output } => {
+            assert_eq!(output, json!([1, 2]));
+        }
+        o => panic!("{o:?}"),
+    }
+}
+
+#[tokio::test]
 async fn parallel_joins_branch_outputs() {
     let w = workflow("wf-par")
         .input::<Value>()

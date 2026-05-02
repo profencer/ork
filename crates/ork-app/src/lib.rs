@@ -6,6 +6,7 @@ pub mod id;
 pub mod inner;
 pub mod manifest;
 pub mod ports;
+pub mod tool_executor;
 pub mod types;
 
 pub use app::{ChatMessage, OrkApp, WorkflowRunHandle};
@@ -13,6 +14,7 @@ pub use builder::OrkAppBuilder;
 pub use inner::OrkAppInner;
 pub use manifest::AppManifest;
 pub use ports::{ServeHandle, Server};
+pub use tool_executor::OrkAppToolExecutor;
 pub use types::*;
 
 impl crate::app::OrkApp {

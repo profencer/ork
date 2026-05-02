@@ -9,6 +9,7 @@ ork-cache = { workspace = true }
 ork-common = { workspace = true }
 ork-core = { workspace = true }
 ork-storage = { workspace = true }
+ork-tool = { workspace = true }
 octocrab = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

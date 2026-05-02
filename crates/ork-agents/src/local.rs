@@ -13,7 +13,6 @@ use ork_core::a2a::{AgentContext, AgentId, ResolveContext};
 use ork_core::models::agent::AgentConfig;
 use ork_core::ports::agent::{Agent, AgentEventStream};
 use ork_core::ports::llm::{ChatMessage, ChatRequest, LlmProvider};
-use ork_core::workflow::engine::ToolExecutor;
 
 use crate::rig_engine::RigEngine;
 use crate::tool_catalog::ToolCatalogBuilder;
@@ -23,7 +22,6 @@ pub struct LocalAgent {
     card: AgentCard,
     config: AgentConfig,
     llm: Arc<dyn LlmProvider>,
-    tools: Arc<dyn ToolExecutor>,
     tool_catalog: ToolCatalogBuilder,
 }
 
@@ -33,7 +31,6 @@ impl LocalAgent {
         config: AgentConfig,
         card_ctx: &CardEnrichmentContext,
         llm: Arc<dyn LlmProvider>,
-        tools: Arc<dyn ToolExecutor>,
     ) -> Self {
         let card = build_local_card(&config, card_ctx);
         let id = config.id.clone();
@@ -42,7 +39,6 @@ impl LocalAgent {
             card,
             config,
             llm,
-            tools,
             tool_catalog: ToolCatalogBuilder::new(),
         }
     }
@@ -99,7 +95,6 @@ impl Agent for LocalAgent {
         let mut user = ChatMessage::user(prompt);
         user.parts = msg.parts.clone();
 
-        let tools = self.tools.clone();
         let tool_catalog = self.tool_catalog.clone();
         let config = self.config.clone();
         let llm = self.llm.clone();
@@ -126,7 +121,7 @@ impl Agent for LocalAgent {
                 is_final: false,
             }));
 
-            let tool_descriptors = match tool_catalog.for_agent(&ctx, &config).await {
+            let tool_defs = match tool_catalog.for_agent(&ctx, &config).await {
                 Ok(t) => t,
                 Err(e) => {
                     yield Err(e);
@@ -144,7 +139,7 @@ impl Agent for LocalAgent {
                 tool_choice: None,
             };
             let caps = resolve_ctx.scope(llm.capabilities_for(&preflight)).await;
-            if !tool_descriptors.is_empty() && !caps.supports_tools {
+            if !tool_defs.is_empty() && !caps.supports_tools {
                 let label = request_model.clone().unwrap_or_default();
                 yield Err(OrkError::LlmProvider(format!(
                     "model {label} does not support tool calls"
@@ -161,8 +156,7 @@ impl Agent for LocalAgent {
                 ctx.clone(),
                 config.clone(),
                 llm.clone(),
-                tools.clone(),
-                tool_descriptors,
+                tool_defs,
                 user.clone(),
                 vec![], // preamble only; Rig `AgentBuilder.preamble(system_prompt)`
             )
@@ -192,10 +186,17 @@ mod tests {
     use ork_core::a2a::CallerIdentity;
     use ork_core::ports::llm::{ChatResponse, LlmChatStream, ModelCapabilities, TokenUsage};
     use ork_core::ports::llm::{ChatStreamEvent, FinishReason, ToolCall};
+    use ork_core::ports::tool_def::ToolDef;
+    use ork_core::workflow::engine::ToolExecutor;
+    use ork_tool::DynToolInvoke;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Mutex;
     use tokio_util::sync::CancellationToken;
+
+    use crate::tool_catalog::ToolCatalogBuilder;
 
     struct ScriptedLlm {
         streams: Mutex<Vec<Vec<ChatStreamEvent>>>,
@@ -259,6 +260,23 @@ mod tests {
             self.active.fetch_sub(1, Ordering::SeqCst);
             Ok(json!({"tool": tool_name, "input": input}))
         }
+    }
+
+    fn catalog_list_repos(backing: Arc<StubTools>) -> ToolCatalogBuilder {
+        let mut m = HashMap::new();
+        let b = backing.clone();
+        let def: Arc<dyn ToolDef> = Arc::new(DynToolInvoke::new(
+            "list_repos",
+            "List configured source repositories available to this tenant.",
+            json!({"type": "object", "properties": {}}),
+            json!({"type": "object"}),
+            Arc::new(move |ctx, input| {
+                let b = b.clone();
+                Box::pin(async move { b.execute(&ctx, "list_repos", &input).await })
+            }),
+        ));
+        m.insert("list_repos".into(), def);
+        ToolCatalogBuilder::new().with_native_tools(Arc::new(m))
     }
 
     fn done(reason: FinishReason) -> ChatStreamEvent {
@@ -351,16 +369,7 @@ mod tests {
             ChatStreamEvent::Delta("hello".into()),
             done(FinishReason::Stop),
         ]]));
-        let agent = LocalAgent::new(
-            cfg(vec![]),
-            &CardEnrichmentContext::minimal(),
-            llm,
-            Arc::new(StubTools {
-                active: AtomicUsize::new(0),
-                max_active: AtomicUsize::new(0),
-                total_calls: AtomicUsize::new(0),
-            }),
-        );
+        let agent = LocalAgent::new(cfg(vec![]), &CardEnrichmentContext::minimal(), llm);
         assert_eq!(collect_text(&agent, ctx()).await.unwrap(), "hello");
     }
 
@@ -380,16 +389,17 @@ mod tests {
                 done(FinishReason::Stop),
             ],
         ]));
+        let tools = Arc::new(StubTools {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            total_calls: AtomicUsize::new(0),
+        });
         let agent = LocalAgent::new(
             cfg(vec!["list_repos".into()]),
             &CardEnrichmentContext::minimal(),
             llm.clone(),
-            Arc::new(StubTools {
-                active: AtomicUsize::new(0),
-                max_active: AtomicUsize::new(0),
-                total_calls: AtomicUsize::new(0),
-            }),
-        );
+        )
+        .with_tool_catalog(catalog_list_repos(tools));
         assert_eq!(collect_text(&agent, ctx()).await.unwrap(), "final");
         let requests = llm.requests.lock().await;
         assert_eq!(requests.len(), 2);
@@ -433,8 +443,8 @@ mod tests {
             cfg(vec!["list_repos".into()]),
             &CardEnrichmentContext::minimal(),
             llm,
-            tools.clone(),
-        );
+        )
+        .with_tool_catalog(catalog_list_repos(tools.clone()));
         collect_text(&agent, ctx()).await.unwrap();
         // Rig may invoke tools sequentially; `max_parallel_tool_calls` still bounds concurrent
         // acquires when the engine does overlap work.
@@ -446,16 +456,13 @@ mod tests {
         let llm = Arc::new(ScriptedLlm::new(vec![]));
         let mut cfg = cfg(vec!["list_repos".into()]);
         cfg.max_tool_iterations = 0;
-        let agent = LocalAgent::new(
-            cfg,
-            &CardEnrichmentContext::minimal(),
-            llm,
-            Arc::new(StubTools {
-                active: AtomicUsize::new(0),
-                max_active: AtomicUsize::new(0),
-                total_calls: AtomicUsize::new(0),
-            }),
-        );
+        let tools = Arc::new(StubTools {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            total_calls: AtomicUsize::new(0),
+        });
+        let agent = LocalAgent::new(cfg, &CardEnrichmentContext::minimal(), llm)
+            .with_tool_catalog(catalog_list_repos(tools));
         let err = collect_text(&agent, ctx()).await.unwrap_err();
         assert!(err.to_string().contains("tool_loop_exceeded"));
     }
@@ -470,16 +477,17 @@ mod tests {
                 ..ModelCapabilities::default()
             },
         });
+        let tools = Arc::new(StubTools {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            total_calls: AtomicUsize::new(0),
+        });
         let agent = LocalAgent::new(
             cfg(vec!["list_repos".into()]),
             &CardEnrichmentContext::minimal(),
             llm.clone(),
-            Arc::new(StubTools {
-                active: AtomicUsize::new(0),
-                max_active: AtomicUsize::new(0),
-                total_calls: AtomicUsize::new(0),
-            }),
-        );
+        )
+        .with_tool_catalog(catalog_list_repos(tools));
         let err = collect_text(&agent, ctx()).await.unwrap_err();
         assert!(err.to_string().contains("does not support tool calls"));
         assert!(llm.requests.lock().await.is_empty());
@@ -490,16 +498,7 @@ mod tests {
         let llm = Arc::new(ScriptedLlm::new(Vec::new()));
         let ctx = ctx();
         ctx.cancel.cancel();
-        let agent = LocalAgent::new(
-            cfg(vec![]),
-            &CardEnrichmentContext::minimal(),
-            llm.clone(),
-            Arc::new(StubTools {
-                active: AtomicUsize::new(0),
-                max_active: AtomicUsize::new(0),
-                total_calls: AtomicUsize::new(0),
-            }),
-        );
+        let agent = LocalAgent::new(cfg(vec![]), &CardEnrichmentContext::minimal(), llm.clone());
         let err = collect_text(&agent, ctx).await.unwrap_err();
         assert!(err.to_string().contains("cancelled"));
         assert!(llm.requests.lock().await.is_empty());

@@ -1,6 +1,6 @@
 # 0051 — Code-first Tool DSL on `rig::Tool` with typed Args/Output
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -210,48 +210,50 @@ This replaces the ad-hoc per-tenant filtering scattered across
 
 ## Acceptance criteria
 
-- [ ] New crate `crates/ork-tool/` with `Cargo.toml` declaring
+- [x] New crate `crates/ork-tool/` with `Cargo.toml` declaring
       `ork-core`, `ork-common`, `serde`, `schemars`, `tokio`,
-      `futures`, `rig-core` (workspace dep). No `axum`/`sqlx`/
+      `futures` (workspace deps). `rig::tool::Tool` bridging is implemented
+      in `ork-agents` (`OrkToolDyn`). No `axum`/`sqlx`/
       `reqwest`/`rmcp`/`rskafka`.
-- [ ] `tool(id) -> ToolBuilder<(), ()>` exported from
+- [x] `tool(id) -> ToolBuilder<(), ()>` exported from
       `crates/ork-tool/src/lib.rs` with the signature shown in
       `Decision`.
-- [ ] `ToolBuilder` enforces typestate: `.execute(...)` is gated
+- [x] `ToolBuilder` enforces typestate: `.execute(...)` is gated
       on `I` and `O` having been set via `.input::<X>()` /
       `.output::<X>()`. Demonstrated by a `compile_fail` doc test.
-- [ ] `Tool<I, O>` implements: (a) ork's `ToolDef` port from
+- [x] `Tool<I, O>` implements: (a) ork's `ToolDef` port from
       `ork-core`; (b) `rig::tool::Tool` (or convertible to it via
       a private adapter); (c) `IntoToolDef`.
-- [ ] `Tool<I, O>::parameters_schema()` returns the
+- [x] `Tool<I, O>::parameters_schema()` returns the
       `schemars`-generated schema for `I`, byte-for-byte equal to
       `serde_json::to_value(schemars::schema_for!(I))`. Asserted
       in `crates/ork-tool/tests/schema_roundtrip.rs`.
-- [ ] `OrkAppBuilder::tool(t)` accepts any `IntoToolDef`. Test
+- [x] `OrkAppBuilder::tool(t)` accepts any `IntoToolDef`. Test
       `crates/ork-tool/tests/registry.rs` builds an `OrkApp` with
       one native tool and one MCP-server-spec, calls
       `app.tool("reverse")` and asserts the descriptor matches
       the builder's input.
-- [ ] Failure-model parity test under
+- [x] Failure-model parity test under
       `crates/ork-tool/tests/failure_model.rs`: a tool returning
       `OrkError::Validation` round-trips to the LLM as a non-fatal
-      tool result; one returning `OrkError::Authn` aborts the run
-      via the `FatalSlot` path from ADR 0047.
-- [ ] `.gate(predicate)` test under
+      tool result; one returning `OrkError::Unauthorized` with
+      `.fatal_on(..)` aborts the run via the `FatalSlot` path from ADR 0047
+      (ADR text’s `Authn` variant maps to `Unauthorized` in `ork-common`).
+- [x] `.gate(predicate)` test under
       `crates/ork-tool/tests/dynamic_visibility.rs`: an agent run
       with `tenant_can("billing.write") == false` does not see
       the gated tool in the descriptor list passed to rig.
-- [ ] [`crates/ork-agents/src/tool_catalog.rs`](../../crates/ork-agents/src/tool_catalog.rs)
-      consumes `Box<dyn ToolDef>` from `OrkApp` rather than
+- [x] [`crates/ork-agents/src/tool_catalog.rs`](../../crates/ork-agents/src/tool_catalog.rs)
+      consumes `Arc<dyn ToolDef>` from `OrkApp` rather than
       hand-built `ToolDescriptor` values; the existing native-tool
       authors (`agent_call`, `peer_*`, code-tools per ADR 0006 /
       0011) migrate to the new builder. **Bytes-for-bytes**
       equivalence of the resulting descriptors is asserted in
       `crates/ork-agents/tests/tool_catalog_parity.rs`.
-- [ ] CI grep: no file under `crates/ork-tool/` imports `axum`,
+- [x] CI grep: no file under `crates/ork-tool/` imports `axum`,
       `sqlx`, `reqwest`, `rmcp`, or `rskafka`.
-- [ ] [`README.md`](README.md) ADR index row added.
-- [ ] [`metrics.csv`](metrics.csv) row appended.
+- [x] [`README.md`](README.md) ADR index row added.
+- [x] [`metrics.csv`](metrics.csv) row appended.
 
 ## Consequences
 
@@ -346,7 +348,8 @@ This replaces the ad-hoc per-tenant filtering scattered across
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Minor | Early draft mentioned a dedicated `McpToolDef` type in `ork-mcp`; `ork-mcp` depends on `ork-agents`, so introducing a `ToolDef` there would cycle or force a crate split. MCP catalog entries are wrapped as `ork_tool::DynToolInvoke::force_non_fatal()` inside `ToolCatalogBuilder::for_agent` and share the same `Arc<dyn ToolDef>` channel. | Accepted as the v1 shape; revisit only if `ork-mcp` / `ork-agents` dependency direction changes. |
+| Nit | Decision §snippet still shows `IntoToolDef -> Box<dyn ToolDef>`; implementation uses `Arc<dyn ToolDef>` (matches `OrkApp` and coherence-friendly blanket impl). | Cosmetic doc drift; implementation is canonical. |
 
 ## Prior art / parity references
 

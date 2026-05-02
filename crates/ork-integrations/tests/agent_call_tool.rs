@@ -4,6 +4,7 @@
 //! [`ToolExecutor::execute`] — the ADR 0011 replacement for the old
 //! set/clear-caller-context seam.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -351,7 +352,7 @@ impl Agent for CustomEchoAgent {
 
 #[tokio::test]
 async fn composite_dispatches_peer_tool_via_agent_call_under_casing_mismatch() {
-    use ork_integrations::tools::{CompositeToolExecutor, IntegrationToolExecutor};
+    use ork_integrations::tool_plane::ToolPlaneExecutor;
 
     let tenant = TenantId::new();
 
@@ -382,8 +383,7 @@ async fn composite_dispatches_peer_tool_via_agent_call_under_casing_mismatch() {
         .clone()
         .expect("executor was set inside Arc::new_cyclic");
 
-    let composite = CompositeToolExecutor::new(IntegrationToolExecutor::new(), None)
-        .with_agent_call(agent_call);
+    let composite = ToolPlaneExecutor::new(Arc::new(HashMap::new()), Some(agent_call), None);
 
     let ctx = root_ctx(tenant);
     let result = composite
@@ -405,12 +405,11 @@ async fn composite_dispatches_peer_tool_via_agent_call_under_casing_mismatch() {
 
 #[tokio::test]
 async fn composite_peer_tool_unknown_returns_clear_error() {
-    use ork_integrations::tools::{CompositeToolExecutor, IntegrationToolExecutor};
+    use ork_integrations::tool_plane::ToolPlaneExecutor;
 
     let tenant = TenantId::new();
     let (_registry, exec) = build_pair(None);
-    let composite =
-        CompositeToolExecutor::new(IntegrationToolExecutor::new(), None).with_agent_call(exec);
+    let composite = ToolPlaneExecutor::new(Arc::new(HashMap::new()), Some(exec), None);
 
     let err = composite
         .execute(
@@ -433,10 +432,10 @@ async fn composite_peer_tool_unknown_returns_clear_error() {
 
 #[tokio::test]
 async fn composite_peer_tool_without_agent_call_returns_explicit_error() {
-    use ork_integrations::tools::{CompositeToolExecutor, IntegrationToolExecutor};
+    use ork_integrations::tool_plane::ToolPlaneExecutor;
 
     let tenant = TenantId::new();
-    let composite = CompositeToolExecutor::new(IntegrationToolExecutor::new(), None);
+    let composite = ToolPlaneExecutor::new(Arc::new(HashMap::new()), None, None);
 
     let err = composite
         .execute(

@@ -7,6 +7,7 @@ members = [
     "crates/ork-workflow",
     "crates/ork-cli",
     "crates/ork-core",
+    "crates/ork-tool",
     "crates/ork-agents",
     "crates/ork-cache",
     "crates/ork-eventing",
@@ -40,6 +41,7 @@ ork-api = { path = "crates/ork-api" }
 ork-app = { path = "crates/ork-app" }
 ork-cli = { path = "crates/ork-cli" }
 ork-core = { path = "crates/ork-core" }
+ork-tool = { path = "crates/ork-tool" }
 ork-agents = { path = "crates/ork-agents" }
 ork-cache = { path = "crates/ork-cache" }
 ork-eventing = { path = "crates/ork-eventing" }

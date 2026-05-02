@@ -8,6 +8,7 @@ ork-a2a = { workspace = true }
 ork-common = { workspace = true }
 ork-core = { workspace = true }
 ork-integrations = { workspace = true }
+ork-tool = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -32,6 +33,7 @@ mcp-stdio-it = []
 [dev-dependencies]
 chrono = { workspace = true }
 ork-mcp = { workspace = true }
+tempfile = { workspace = true }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "stream",

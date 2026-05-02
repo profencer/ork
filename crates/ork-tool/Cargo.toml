@@ -1,0 +1,29 @@
+[package]
+name = "ork-tool"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures.workspace = true
+ork-common.workspace = true
+ork-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+async-stream.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+ork-agents = { workspace = true, features = ["rig-engine"] }
+ork-app.workspace = true
+ork-a2a.workspace = true
+ork-common.workspace = true
+ork-core.workspace = true
+serde_json.workspace = true
+trybuild = "1"
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-util.workspace = true

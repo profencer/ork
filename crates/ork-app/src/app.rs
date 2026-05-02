@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::inner::OrkAppInner;
 use crate::manifest::{self, AppManifest};
 use crate::ports::server::{ServeHandle, Server};
+use crate::tool_executor::OrkAppToolExecutor;
 
 pub use ork_core::ports::workflow_run::WorkflowRunHandle;
 
@@ -84,6 +85,16 @@ impl OrkApp {
         manifest::build_manifest(&self.inner)
     }
 
+    pub fn tool_executor(&self) -> Arc<dyn ork_core::workflow::engine::ToolExecutor> {
+        Arc::new(OrkAppToolExecutor::new(Arc::new(
+            self.inner
+                .tools
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        )))
+    }
+
     /// Per-run dependencies for ADR-0050 code-first workflows.
     #[must_use]
     pub fn workflow_run_deps(&self) -> WorkflowRunDeps {
@@ -91,7 +102,7 @@ impl OrkApp {
             snapshot_store: self.inner.snapshot_store.clone(),
             agents: Some(self.inner.agent_registry.clone()),
             workflow_repo: None,
-            tool_executor: None,
+            tool_executor: Some(self.tool_executor()),
         }
     }
 

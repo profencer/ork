@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -216,10 +217,8 @@ async fn main() -> anyhow::Result<()> {
         tenant_header: "X-Tenant-Id".to_string(),
     };
 
-    // ADR 0006 wiring is cyclic: `LocalAgent`s own the composite `ToolExecutor`,
-    // which owns the `AgentCallToolExecutor`, which needs to resolve targets through
-    // the `AgentRegistry` that owns those same `LocalAgent`s. We resolve it with
-    // `Arc::new_cyclic`: the `agent_call` executor holds a `Weak<AgentRegistry>`
+    // ADR 0006 wiring is cyclic: `LocalAgent`s consult [`ToolCatalogBuilder`], which needs
+    // [`AgentCallToolExecutor`] for `peer_*` entries, which needs a `Weak<AgentRegistry>`
     // that upgrades inside `execute` to the very `Arc` returned here.
     let agent_registry = Arc::new_cyclic(|registry_weak| {
         let agent_call_exec = Arc::new(ork_integrations::agent_call::AgentCallToolExecutor::new(
@@ -227,32 +226,26 @@ async fn main() -> anyhow::Result<()> {
             Some(delegation_publisher.clone()),
             Some(a2a_task_repo.clone()),
         ));
-        let mut composite = ork_integrations::tools::CompositeToolExecutor::new(
-            integration_executor,
+        let integration_arc = Arc::new(integration_executor);
+        let mut native = HashMap::new();
+        ork_integrations::native_tool_defs::extend_native_tool_map(
+            &mut native,
+            integration_arc,
             code_executor,
-        )
-        .with_agent_call(agent_call_exec)
-        .with_artifacts(artifact_tool_exec.clone());
-        // ADR-0010: route `mcp:<server>.<tool>` calls through the MCP
-        // client. The trait-object cast lines up with
-        // `CompositeToolExecutor::with_mcp(Arc<dyn ToolExecutor>)`.
-        if let Some(mcp) = mcp_client.clone() {
-            let mcp_exec: Arc<dyn ork_core::workflow::engine::ToolExecutor> = mcp;
-            composite = composite.with_mcp(mcp_exec);
-        }
-        let tool_executor: Arc<dyn ork_core::workflow::engine::ToolExecutor> = Arc::new(composite);
+            artifact_tool_exec.clone(),
+            Some(agent_call_exec.clone()),
+        );
+        let native_arc = Arc::new(native);
         let mut catalog = ork_agents::tool_catalog::ToolCatalogBuilder::new()
-            .with_registry(registry_weak.clone());
+            .with_registry(registry_weak.clone())
+            .with_native_tools(native_arc)
+            .with_agent_call_for_peers(agent_call_exec);
         if let Some(mcp) = mcp_client.clone() {
-            let mcp_catalog: Arc<dyn ork_agents::tool_catalog::McpToolCatalog> = mcp;
-            catalog = catalog.with_mcp(mcp_catalog);
+            let mcp_cat: Arc<dyn ork_agents::tool_catalog::McpToolCatalog> = mcp.clone();
+            let mcp_exec: Arc<dyn ork_core::workflow::engine::ToolExecutor> = mcp;
+            catalog = catalog.with_mcp_plane(mcp_cat, mcp_exec);
         }
-        ork_agents::registry::build_default_registry_with_catalog(
-            &card_ctx,
-            llm_provider,
-            tool_executor,
-            catalog,
-        )
+        ork_agents::registry::build_default_registry_with_catalog(&card_ctx, llm_provider, catalog)
     });
 
     // ADR-0006: a per-process cancellation token. ADR-0008 will replace this with a

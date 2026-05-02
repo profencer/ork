@@ -1,0 +1,21 @@
+error[E0599]: the method `execute` exists for struct `ToolBuilder<Underspec, Underspec>`, but its trait bounds were not satisfied
+ --> tests/compile_fail/execute_without_io.rs:7:10
+  |
+5 |       let _ = tool("x")
+  |  _____________-
+6 | |         .description("d")
+7 | |         .execute(|_, ()| async {
+  | |         -^^^^^^^ method cannot be called on `ToolBuilder<Underspec, Underspec>` due to unsatisfied trait bounds
+  | |_________|
+  |
+  |
+ ::: src/builder.rs
+  |
+  |   pub struct Underspec;
+  |   -------------------- doesn't satisfy `Underspec: schemars::JsonSchema`, `Underspec: serde_core::de::Deserialize<'de>`, `Underspec: serde_core::de::DeserializeOwned` or `Underspec: serde_core::ser::Serialize`
+  |
+  = note: the following trait bounds were not satisfied:
+          `Underspec: schemars::JsonSchema`
+          `Underspec: serde_core::ser::Serialize`
+          `Underspec: serde_core::de::Deserialize<'de>`
+          which is required by `Underspec: serde_core::de::DeserializeOwned`

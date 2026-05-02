@@ -24,6 +24,7 @@ use ork_core::ports::llm::{
     ChatRequest, ChatResponse, ChatStreamEvent, FinishReason, LlmChatStream, LlmProvider,
     TokenUsage, ToolCall,
 };
+use ork_core::workflow::engine::ToolExecutor;
 use ork_mcp::{McpClient, McpServerConfig, McpTransportConfig};
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -136,12 +137,12 @@ async fn rig_engine_mcp_echo_round_trip() {
             env: HashMap::new(),
         },
     };
-    let client = McpClient::from_global_servers(
+    let client = Arc::new(McpClient::from_global_servers(
         vec![cfg],
         Duration::from_secs(60),
         Duration::from_secs(60),
         reqwest::Client::new(),
-    );
+    ));
     let tenant = TenantId::new();
     client
         .refresh_for_tenant(tenant)
@@ -164,13 +165,10 @@ async fn rig_engine_mcp_echo_round_trip() {
     ]));
 
     let ctx = test_ctx(tenant);
-    let agent = LocalAgent::new(
-        agent_config(),
-        &CardEnrichmentContext::minimal(),
-        llm,
-        client.clone(),
-    )
-    .with_tool_catalog(ToolCatalogBuilder::new().with_mcp(client.clone()));
+    let cat: Arc<dyn ork_agents::tool_catalog::McpToolCatalog> = client.clone();
+    let exec: Arc<dyn ToolExecutor> = client.clone();
+    let agent = LocalAgent::new(agent_config(), &CardEnrichmentContext::minimal(), llm)
+        .with_tool_catalog(ToolCatalogBuilder::new().with_mcp_plane(cat, exec));
 
     let msg = AgentMessage {
         role: Role::User,

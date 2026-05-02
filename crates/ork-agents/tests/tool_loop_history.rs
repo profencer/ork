@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use ork_a2a::{Message as AgentMessage, MessageId, Part, Role};
 use ork_agents::local::LocalAgent;
+use ork_agents::tool_catalog::ToolCatalogBuilder;
 use ork_common::error::OrkError;
 use ork_common::types::TenantId;
 use ork_core::a2a::card_builder::CardEnrichmentContext;
@@ -14,7 +16,9 @@ use ork_core::ports::llm::{
     ChatRequest, ChatResponse, ChatStreamEvent, FinishReason, LlmChatStream, LlmProvider,
     TokenUsage, ToolCall,
 };
+use ork_core::ports::tool_def::ToolDef;
 use ork_core::workflow::engine::ToolExecutor;
+use ork_tool::DynToolInvoke;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -80,6 +84,23 @@ impl ToolExecutor for FailFirstTools {
         }
         Ok(json!({"tool": tool_name, "input": input}))
     }
+}
+
+fn catalog_list_repos(backing: Arc<dyn ToolExecutor>) -> ToolCatalogBuilder {
+    let mut m = HashMap::new();
+    let b = backing.clone();
+    let def: Arc<dyn ToolDef> = Arc::new(DynToolInvoke::new(
+        "list_repos",
+        "List configured source repositories available to this tenant.",
+        json!({"type": "object", "properties": {}}),
+        json!({"type": "object"}),
+        Arc::new(move |ctx, input| {
+            let b = b.clone();
+            Box::pin(async move { b.execute(&ctx, "list_repos", &input).await })
+        }),
+    ));
+    m.insert("list_repos".into(), def);
+    ToolCatalogBuilder::new().with_native_tools(Arc::new(m))
 }
 
 fn done(reason: FinishReason) -> ChatStreamEvent {
@@ -157,12 +178,8 @@ async fn tool_loop_history_matches_openai_conventions() {
         requests: Mutex::new(Vec::new()),
     });
     let ctx = ctx();
-    let agent = LocalAgent::new(
-        config(),
-        &CardEnrichmentContext::minimal(),
-        llm.clone(),
-        Arc::new(EchoTools),
-    );
+    let agent = LocalAgent::new(config(), &CardEnrichmentContext::minimal(), llm.clone())
+        .with_tool_catalog(catalog_list_repos(Arc::new(EchoTools)));
     let msg = AgentMessage {
         role: Role::User,
         parts: vec![Part::Text {
@@ -246,12 +263,8 @@ async fn tool_validation_error_feeds_back_to_llm_as_tool_result() {
         )]),
     });
     let ctx = ctx();
-    let agent = LocalAgent::new(
-        config(),
-        &CardEnrichmentContext::minimal(),
-        llm.clone(),
-        tools,
-    );
+    let agent = LocalAgent::new(config(), &CardEnrichmentContext::minimal(), llm.clone())
+        .with_tool_catalog(catalog_list_repos(tools));
     let msg = AgentMessage {
         role: Role::User,
         parts: vec![Part::Text {
@@ -319,12 +332,8 @@ async fn tool_call_cancellation_still_aborts_step() {
     let tools = Arc::new(EchoTools);
     let ctx = ctx();
     ctx.cancel.cancel();
-    let agent = LocalAgent::new(
-        config(),
-        &CardEnrichmentContext::minimal(),
-        llm.clone(),
-        tools,
-    );
+    let agent = LocalAgent::new(config(), &CardEnrichmentContext::minimal(), llm.clone())
+        .with_tool_catalog(catalog_list_repos(tools));
     let msg = AgentMessage {
         role: Role::User,
         parts: vec![Part::Text {

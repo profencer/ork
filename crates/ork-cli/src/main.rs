@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use ork_core::ports::integration::{RepoQuery, SourceControlAdapter};
 use ork_core::ports::llm::{ChatMessage, ChatRequest, ChatStreamEvent, LlmProvider};
 use ork_core::workflow::NoopWorkflowRepository;
 use ork_core::workflow::compiler;
-use ork_core::workflow::engine::{ToolExecutor, WorkflowEngine};
+use ork_core::workflow::engine::WorkflowEngine;
 
 #[derive(Parser)]
 #[command(name = "ork", about = "Business flow automation CLI")]
@@ -438,7 +439,7 @@ async fn run_change_plan(
         .context("ADR 0012: failed to build LlmRouter from [llm] config")?,
     );
 
-    let tool_executor = build_cli_tool_executor(&config)?;
+    let tool_catalog = build_cli_tool_catalog(&config)?;
     let card_ctx = ork_core::a2a::card_builder::CardEnrichmentContext {
         public_base_url: config.discovery.public_base_url.clone(),
         provider_organization: config.discovery.provider_organization.clone(),
@@ -447,10 +448,10 @@ async fn run_change_plan(
         include_tenant_required_ext: config.discovery.include_tenant_required_ext,
         tenant_header: "X-Tenant-Id".to_string(),
     };
-    let agent_registry = Arc::new(ork_agents::registry::build_default_registry(
+    let agent_registry = Arc::new(ork_agents::registry::build_default_registry_with_catalog(
         &card_ctx,
         llm,
-        tool_executor,
+        tool_catalog,
     ));
     let engine = Arc::new(WorkflowEngine::new(
         Arc::new(NoopWorkflowRepository),
@@ -511,9 +512,9 @@ async fn run_change_plan(
     Ok(())
 }
 
-fn build_cli_tool_executor(
+fn build_cli_tool_catalog(
     config: &ork_common::config::AppConfig,
-) -> Result<Arc<dyn ToolExecutor>> {
+) -> Result<ork_agents::tool_catalog::ToolCatalogBuilder> {
     let mut integration_executor = ork_integrations::tools::IntegrationToolExecutor::new();
 
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
@@ -556,9 +557,16 @@ fn build_cli_tool_executor(
         ))
     };
 
-    Ok(Arc::new(
-        ork_integrations::tools::CompositeToolExecutor::new(integration_executor, code_executor),
-    ))
+    let mut native = HashMap::new();
+    ork_integrations::native_tool_defs::extend_native_tool_map(
+        &mut native,
+        Arc::new(integration_executor),
+        code_executor,
+        None,
+        None,
+    );
+
+    Ok(ork_agents::tool_catalog::ToolCatalogBuilder::new().with_native_tools(Arc::new(native)))
 }
 
 fn mask_token(token: &str) -> String {

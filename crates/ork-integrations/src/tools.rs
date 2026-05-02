@@ -8,12 +8,7 @@ use tracing::debug;
 
 use ork_core::a2a::AgentContext;
 use ork_core::ports::integration::{RepoQuery, SourceControlAdapter};
-use ork_core::ports::llm::ToolDescriptor;
 use ork_core::workflow::engine::ToolExecutor;
-
-use crate::agent_call::AgentCallToolExecutor;
-use crate::artifact_tools::{self, ArtifactToolExecutor};
-use crate::code_tools::CodeToolExecutor;
 
 /// Registry of tools available to agents, backed by integration adapters.
 pub struct IntegrationToolExecutor {
@@ -29,60 +24,6 @@ impl IntegrationToolExecutor {
 
     pub fn register_adapter(&mut self, name: &str, adapter: Arc<dyn SourceControlAdapter>) {
         self.adapters.insert(name.to_string(), adapter);
-    }
-
-    #[must_use]
-    pub fn descriptor(name: &str) -> Option<ToolDescriptor> {
-        let repo_window = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "owner": {"type": "string"},
-                "repo": {"type": "string"}
-            }
-        });
-        let tag_window = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "owner": {"type": "string"},
-                "repo": {"type": "string"},
-                "from_tag": {"type": "string"},
-                "to_tag": {"type": "string"}
-            },
-            "required": ["from_tag", "to_tag"]
-        });
-        match name {
-            "github_recent_activity" => Some(ToolDescriptor {
-                name: name.into(),
-                description: "Fetch recent GitHub commits, pull requests, and issues.".into(),
-                parameters: repo_window,
-            }),
-            "gitlab_recent_activity" => Some(ToolDescriptor {
-                name: name.into(),
-                description: "Fetch recent GitLab commits, merge requests, and issues.".into(),
-                parameters: repo_window,
-            }),
-            "github_merged_prs" => Some(ToolDescriptor {
-                name: name.into(),
-                description: "Fetch GitHub pull requests merged between two tags.".into(),
-                parameters: tag_window,
-            }),
-            "gitlab_merged_prs" => Some(ToolDescriptor {
-                name: name.into(),
-                description: "Fetch GitLab merge requests merged between two tags.".into(),
-                parameters: tag_window,
-            }),
-            "github_pipelines" => Some(ToolDescriptor {
-                name: name.into(),
-                description: "Fetch GitHub pipeline/check information for a repository.".into(),
-                parameters: repo_window,
-            }),
-            "gitlab_pipelines" => Some(ToolDescriptor {
-                name: name.into(),
-                description: "Fetch GitLab pipeline information for a repository.".into(),
-                parameters: repo_window,
-            }),
-            _ => artifact_tools::integration_descriptor(name),
-        }
     }
 }
 
@@ -229,140 +170,13 @@ impl IntegrationToolExecutor {
     }
 }
 
-/// Routes GitHub/GitLab integration tools, local workspace code tools,
-/// the `agent_call` peer-delegation tool from ADR 0006, and (when set)
-/// any `mcp:<server>.<tool>` invocation from ADR 0010.
-pub struct CompositeToolExecutor {
-    integration: Arc<IntegrationToolExecutor>,
-    code: Option<Arc<CodeToolExecutor>>,
-    agent_call: Option<Arc<AgentCallToolExecutor>>,
-    /// ADR-0010 §`Composite routing`. A trait-object so `ork-integrations`
-    /// stays unaware of the concrete `ork_mcp::McpClient` (and therefore
-    /// of the rmcp dep). Tests can substitute any `ToolExecutor` impl.
-    mcp: Option<Arc<dyn ToolExecutor>>,
-    /// ADR-0016: optional [`ArtifactToolExecutor`]; if unset, artifact tools error at runtime.
-    artifacts: Option<Arc<ArtifactToolExecutor>>,
-}
-
-impl CompositeToolExecutor {
-    pub fn new(integration: IntegrationToolExecutor, code: Option<Arc<CodeToolExecutor>>) -> Self {
-        Self {
-            integration: Arc::new(integration),
-            code,
-            agent_call: None,
-            mcp: None,
-            artifacts: None,
-        }
-    }
-
-    /// Attach the `agent_call` tool executor (ADR 0006). When set, calls to
-    /// `tool_name == "agent_call"` are dispatched through it; otherwise such calls
-    /// fail with [`OrkError::Integration`].
-    #[must_use]
-    pub fn with_agent_call(mut self, exec: Arc<AgentCallToolExecutor>) -> Self {
-        self.agent_call = Some(exec);
-        self
-    }
-
-    /// Borrow the attached `agent_call` executor; `LocalAgent` uses this to set the
-    /// per-call caller context before dispatching a tool batch.
-    #[must_use]
-    pub fn agent_call(&self) -> Option<&Arc<AgentCallToolExecutor>> {
-        self.agent_call.as_ref()
-    }
-
-    /// Attach the MCP tool executor (ADR 0010). When set, every tool name
-    /// that starts with `mcp:` is routed through it. Without this
-    /// builder call such names produce a clear `Integration` error
-    /// instead of being silently misrouted to the GitHub/GitLab arm.
-    #[must_use]
-    pub fn with_mcp(mut self, exec: Arc<dyn ToolExecutor>) -> Self {
-        self.mcp = Some(exec);
-        self
-    }
-
-    /// ADR-0016: attach the artifact tool executor; when `None`, artifact tools
-    /// return a clear `Integration` error.
-    #[must_use]
-    pub fn with_artifacts(mut self, exec: Option<Arc<ArtifactToolExecutor>>) -> Self {
-        self.artifacts = exec;
-        self
-    }
-}
-
-#[async_trait]
-impl ToolExecutor for CompositeToolExecutor {
-    async fn execute(
-        &self,
-        ctx: &AgentContext,
-        tool_name: &str,
-        input: &serde_json::Value,
-    ) -> Result<serde_json::Value, OrkError> {
-        // ADR-0010 §`Composite routing`. The `mcp:` arm runs FIRST so a
-        // future bug that registers an `mcp:*` literal in the
-        // integration map can't shadow a real MCP tool. Tested by
-        // `composite_mcp_takes_priority_over_integration_match` below.
-        if tool_name.starts_with("mcp:") {
-            let mcp = self.mcp.as_ref().ok_or_else(|| {
-                OrkError::Integration(format!(
-                    "tool `{tool_name}` is mcp-prefixed but the MCP tool plane is not configured (ADR-0010: set [mcp] in config or per-tenant settings)"
-                ))
-            })?;
-            return mcp.execute(ctx, tool_name, input).await;
-        }
-
-        if tool_name == "agent_call" {
-            let agent_call = self.agent_call.as_ref().ok_or_else(|| {
-                OrkError::Integration(
-                    "agent_call tool not configured (ADR-0006 not wired in this build)".into(),
-                )
-            })?;
-            return agent_call.execute(ctx, tool_name, input).await;
-        }
-
-        if artifact_tools::is_artifact_tool(tool_name) {
-            let exec = self.artifacts.as_ref().ok_or_else(|| {
-                OrkError::Integration(
-                    "artifact tools not configured (ADR-0016: provision ArtifactStore in process)"
-                        .into(),
-                )
-            })?;
-            return exec.execute(ctx, tool_name, input).await;
-        }
-
-        // ADR-0006 §`LLM tool surface`. The catalog advertises one descriptor
-        // per peer skill named `peer_<agent_id>_<skill_id>`; this arm desugars
-        // those into the same one-shot delegation as `agent_call` so the LLM
-        // can pick a peer by capability without us having to register every
-        // possible target as its own arm. Without this, the integration arm
-        // below catches `peer_*` and returns `unknown tool: …`.
-        if tool_name.starts_with("peer_") {
-            let agent_call = self.agent_call.as_ref().ok_or_else(|| {
-                OrkError::Integration(format!(
-                    "peer tool `{tool_name}` was advertised by the catalog but agent_call is not configured (ADR-0006 not wired in this build)"
-                ))
-            })?;
-            return agent_call.dispatch_peer_tool(ctx, tool_name, input).await;
-        }
-
-        if CodeToolExecutor::is_code_tool(tool_name) {
-            if let Some(c) = &self.code {
-                return c.execute(ctx, tool_name, input).await;
-            }
-            return Err(OrkError::Integration(
-                "code/workspace tools not configured (add repositories in config)".into(),
-            ));
-        }
-
-        self.integration.execute(ctx, tool_name, input).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool_plane::ToolPlaneExecutor;
     use ork_common::types::TenantId;
     use ork_core::a2a::CallerIdentity;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio_util::sync::CancellationToken;
 
@@ -398,8 +212,8 @@ mod tests {
         }
     }
 
-    fn empty_composite() -> CompositeToolExecutor {
-        CompositeToolExecutor::new(IntegrationToolExecutor::new(), None)
+    fn empty_plane() -> ToolPlaneExecutor {
+        ToolPlaneExecutor::new(Arc::new(HashMap::new()), None, None)
     }
 
     fn test_ctx(tenant: TenantId) -> AgentContext {
@@ -430,7 +244,7 @@ mod tests {
     async fn composite_routes_mcp_prefix_to_mcp_when_set() {
         let stub = StubExecutor::new();
         let exec: Arc<dyn ToolExecutor> = stub.clone();
-        let composite = empty_composite().with_mcp(exec);
+        let composite = ToolPlaneExecutor::new(Arc::new(HashMap::new()), None, Some(exec));
         let tenant = TenantId::new();
 
         let result = composite
@@ -453,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn composite_returns_clear_error_for_mcp_prefix_when_unset() {
-        let composite = empty_composite();
+        let composite = empty_plane();
         let tenant = TenantId::new();
         let err = composite
             .execute(&test_ctx(tenant), "mcp:foo.bar", &serde_json::json!({}))
@@ -479,7 +293,7 @@ mod tests {
     async fn composite_mcp_takes_priority_over_integration_match() {
         let stub = StubExecutor::new();
         let exec: Arc<dyn ToolExecutor> = stub.clone();
-        let composite = empty_composite().with_mcp(exec);
+        let composite = ToolPlaneExecutor::new(Arc::new(HashMap::new()), None, Some(exec));
         let tenant = TenantId::new();
 
         let res = composite

@@ -12,6 +12,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use ork_a2a::{Message as AgentMessage, MessageId, Part, Role, TaskEvent as AgentEvent, TaskState};
 use ork_agents::local::LocalAgent;
+use ork_agents::tool_catalog::ToolCatalogBuilder;
 use ork_common::error::OrkError;
 use ork_common::types::TenantId;
 use ork_core::a2a::card_builder::CardEnrichmentContext;
@@ -25,7 +26,9 @@ use ork_core::ports::llm::{
     ChatRequest, ChatResponse, ChatStreamEvent, FinishReason, LlmChatStream, LlmProvider,
     MessageRole, TokenUsage, ToolCall,
 };
+use ork_core::ports::tool_def::ToolDef;
 use ork_core::workflow::engine::ToolExecutor;
+use ork_tool::DynToolInvoke;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -190,6 +193,30 @@ impl ToolExecutor for FatalTools {
     }
 }
 
+fn catalog_github_recent(backing: Arc<dyn ToolExecutor>) -> ToolCatalogBuilder {
+    let mut m = HashMap::new();
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"}
+        }
+    });
+    let b = backing.clone();
+    let def: Arc<dyn ToolDef> = Arc::new(DynToolInvoke::new(
+        "github_recent_activity",
+        "Fetch recent GitHub commits, pull requests, and issues.",
+        schema,
+        json!({"type": "object"}),
+        Arc::new(move |ctx, input| {
+            let b = b.clone();
+            Box::pin(async move { b.execute(&ctx, "github_recent_activity", &input).await })
+        }),
+    ));
+    m.insert("github_recent_activity".into(), def);
+    ToolCatalogBuilder::new().with_native_tools(Arc::new(m))
+}
+
 #[tokio::test]
 async fn smoke_text_only_streams_message_and_completed() {
     let llm = Arc::new(ScriptedLlm::new(vec![vec![
@@ -197,12 +224,7 @@ async fn smoke_text_only_streams_message_and_completed() {
         done(FinishReason::Stop, "stub"),
     ]]));
     let ctx = test_ctx(CancellationToken::new());
-    let agent = LocalAgent::new(
-        smoke_config(&[]),
-        &CardEnrichmentContext::minimal(),
-        llm,
-        Arc::new(EchoTools),
-    );
+    let agent = LocalAgent::new(smoke_config(&[]), &CardEnrichmentContext::minimal(), llm);
     let mut stream = agent
         .send_stream(ctx.clone(), user_msg(&ctx, "prompt"))
         .await
@@ -285,8 +307,8 @@ async fn smoke_tool_round_trip_through_rig_engine() {
         smoke_config(&["github_recent_activity"]),
         &CardEnrichmentContext::minimal(),
         llm.clone(),
-        Arc::new(EchoTools),
-    );
+    )
+    .with_tool_catalog(catalog_github_recent(Arc::new(EchoTools)));
 
     let mut stream = agent
         .send_stream(ctx.clone(), user_msg(&ctx, "run tool"))
@@ -331,8 +353,8 @@ async fn smoke_non_fatal_tool_error_allows_retry() {
         smoke_config(&["github_recent_activity"]),
         &CardEnrichmentContext::minimal(),
         llm,
-        tools,
-    );
+    )
+    .with_tool_catalog(catalog_github_recent(tools));
 
     let mut stream = agent
         .send_stream(ctx.clone(), user_msg(&ctx, "x"))
@@ -376,8 +398,8 @@ async fn smoke_fatal_tool_error_aborts_without_completed() {
         smoke_config(&["github_recent_activity"]),
         &CardEnrichmentContext::minimal(),
         llm,
-        tools.clone(),
-    );
+    )
+    .with_tool_catalog(catalog_github_recent(tools.clone()));
 
     let mut stream = agent
         .send_stream(ctx.clone(), user_msg(&ctx, "y"))
@@ -473,7 +495,8 @@ async fn smoke_parallel_tool_calls_observe_semaphore() {
     let ctx = test_ctx(CancellationToken::new());
     let mut cfg = smoke_config(&["github_recent_activity"]);
     cfg.max_parallel_tool_calls = 2;
-    let agent = LocalAgent::new(cfg, &CardEnrichmentContext::minimal(), llm, tools.clone());
+    let agent = LocalAgent::new(cfg, &CardEnrichmentContext::minimal(), llm)
+        .with_tool_catalog(catalog_github_recent(tools.clone()));
     let mut stream = agent
         .send_stream(ctx.clone(), user_msg(&ctx, "parallel tools"))
         .await
@@ -622,12 +645,8 @@ async fn smoke_oversized_tool_result_spills_to_artifact() {
     let mut cfg = smoke_config(&["github_recent_activity"]);
     cfg.max_tool_result_bytes = 256;
 
-    let agent = LocalAgent::new(
-        cfg,
-        &CardEnrichmentContext::minimal(),
-        llm.clone(),
-        Arc::new(BigJsonTools),
-    );
+    let agent = LocalAgent::new(cfg, &CardEnrichmentContext::minimal(), llm.clone())
+        .with_tool_catalog(catalog_github_recent(Arc::new(BigJsonTools)));
     let mut stream = agent
         .send_stream(ctx.clone(), user_msg(&ctx, "spill"))
         .await
@@ -679,7 +698,6 @@ async fn smoke_cancel_mid_stream_under_50ms() {
         smoke_config(&[]),
         &CardEnrichmentContext::minimal(),
         Arc::new(StallAfterFirstDelta),
-        Arc::new(EchoTools),
     );
 
     tokio::spawn({
