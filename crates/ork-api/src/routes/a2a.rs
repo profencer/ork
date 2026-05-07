@@ -1029,10 +1029,17 @@ fn caller_identity(auth: &AuthContext) -> CallerIdentity {
     let user_id = uuid::Uuid::parse_str(&auth.user_id)
         .ok()
         .map(ork_common::types::UserId);
+    // ADR-0020: forward the enriched JWT shape onto `CallerIdentity` so handlers
+    // and downstream delegation see the trust tier / class and the tenant chain
+    // the inbound JWT declared.
     CallerIdentity {
         tenant_id: auth.tenant_id,
         user_id,
         scopes: auth.scopes.clone(),
+        tenant_chain: auth.tenant_chain.clone(),
+        trust_tier: auth.trust_tier,
+        trust_class: auth.trust_class,
+        agent_id: auth.agent_id.clone(),
     }
 }
 

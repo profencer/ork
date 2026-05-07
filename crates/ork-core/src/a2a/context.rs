@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use ork_a2a::{ContextId, TaskId};
+use ork_common::auth::{TrustClass, TrustTier};
 use ork_common::error::OrkError;
 use ork_common::types::{TenantId, UserId};
 use serde_json::Value;
@@ -16,11 +17,24 @@ pub type AgentId = String;
 /// reject the child request with [`OrkError::Workflow`] to bound recursion.
 pub const MAX_DELEGATION_DEPTH: u8 = 8;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CallerIdentity {
     pub tenant_id: TenantId,
     pub user_id: Option<UserId>,
     pub scopes: Vec<String>,
+    /// ADR-0020 §`Tenant id propagation across delegation`: ordered list of
+    /// tenant ids whose trust boundaries this request crossed before reaching
+    /// the current handler. Empty for top-level (single-hop) calls. Phase B
+    /// populates this on outbound `child_for_delegation` when the target's
+    /// tenant differs from the source.
+    pub tenant_chain: Vec<TenantId>,
+    /// ADR-0020 §`Mesh trust`: defaults to [`TrustTier::Internal`].
+    pub trust_tier: TrustTier,
+    /// ADR-0020 §`Mesh trust`: defaults to [`TrustClass::User`].
+    pub trust_class: TrustClass,
+    /// ADR-0020: present when `trust_class == Agent` (set by ork during
+    /// outbound delegation). The local agent id whose ork minted the token.
+    pub agent_id: Option<AgentId>,
 }
 
 /// Per-step LLM provider/model overrides carried on [`AgentContext`].
@@ -163,6 +177,7 @@ mod tests {
                 tenant_id: tenant,
                 user_id: None,
                 scopes: vec![],
+                ..CallerIdentity::default()
             },
             push_notification_url: None,
             trace_ctx: None,

@@ -190,7 +190,17 @@ impl OrkApp {
                         Some(w) => w,
                         None => continue,
                     };
-                    let ctx = synthetic_workflow_agent_context();
+                    let Some(system_tenant) = app.inner.system_tenant_id else {
+                        // Build-time validation in OrkAppBuilder::build() prevents this
+                        // (a cron-bearing workflow without a system_tenant is a config
+                        // error). The branch is here as defence-in-depth.
+                        tracing::error!(
+                            workflow_id = %wid,
+                            "cron trigger fired but OrkApp has no system_tenant; skipping run (ADR-0020)"
+                        );
+                        continue;
+                    };
+                    let ctx = scheduled_run_agent_context(system_tenant);
                     let deps = app.workflow_run_deps();
                     match wf.run(ctx, serde_json::Value::Null, deps).await {
                         Ok(_) => tracing::info!(workflow_id = %wid, "cron trigger fired workflow"),
@@ -241,17 +251,22 @@ impl OrkApp {
     }
 }
 
-fn synthetic_workflow_agent_context() -> AgentContext {
-    let tenant_id = TenantId::new();
+/// Build the [`AgentContext`] for a workflow run fired without an external HTTP
+/// caller — currently only the cron scheduler. Per ADR-0020 the run executes
+/// under the deployment's configured system tenant, so RLS policies bind to a
+/// real tenant id (rather than a fresh `TenantId::new()`, which would orphan
+/// rows under a tenant that does not exist).
+fn scheduled_run_agent_context(system_tenant: TenantId) -> AgentContext {
     AgentContext {
-        tenant_id,
+        tenant_id: system_tenant,
         task_id: TaskId::new(),
         parent_task_id: None,
         cancel: CancellationToken::new(),
         caller: CallerIdentity {
-            tenant_id,
+            tenant_id: system_tenant,
             user_id: None,
             scopes: vec![],
+            ..CallerIdentity::default()
         },
         push_notification_url: None,
         trace_ctx: None,

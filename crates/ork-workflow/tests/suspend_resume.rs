@@ -20,6 +20,7 @@ fn root_ctx() -> AgentContext {
             tenant_id: tenant,
             user_id: None,
             scopes: vec![],
+            ..CallerIdentity::default()
         },
         push_notification_url: None,
         trace_ctx: None,

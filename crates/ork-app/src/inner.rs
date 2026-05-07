@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use ork_common::types::TenantId;
 use ork_core::agent_registry::AgentRegistry;
 use ork_core::ports::agent::Agent;
 use ork_core::ports::id_generator::IdGenerator;
@@ -36,6 +37,11 @@ pub struct OrkAppInner {
     pub(crate) request_context_schema: Option<Value>,
     pub(crate) id_generator: Option<Arc<dyn IdGenerator>>,
     pub(crate) environment: Environment,
+    /// ADR-0020 §`Tenant id propagation`: tenant under which background-fired
+    /// runs (cron triggers, replays) execute. Required when any registered
+    /// workflow declares a cron trigger; absent installs without scheduled
+    /// workflows leave it `None` and never need to fabricate a tenant id.
+    pub(crate) system_tenant_id: Option<TenantId>,
     pub(crate) built_at: DateTime<Utc>,
     pub(crate) ork_version: String,
 }

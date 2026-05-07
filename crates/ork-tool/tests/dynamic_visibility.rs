@@ -48,6 +48,7 @@ fn ctx_with_scopes(scopes: Vec<String>) -> AgentContext {
             tenant_id: tenant,
             user_id: None,
             scopes,
+            ..ork_core::a2a::CallerIdentity::default()
         },
         push_notification_url: None,
         trace_ctx: None,

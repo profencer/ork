@@ -80,10 +80,31 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
         tenant_uuid = impersonated;
     }
 
+    // ADR-0020: surface the enriched JWT shape to handlers. `tid_chain` is
+    // translated to typed `TenantId`s; entries that fail to parse are dropped
+    // (the chain is informational/audit, not an authorisation primitive on
+    // its own) and a single warning is logged so the operator sees malformed
+    // tokens.
+    let tenant_chain: Vec<TenantId> = claims
+        .tid_chain
+        .iter()
+        .filter_map(|raw| match Uuid::parse_str(raw) {
+            Ok(id) => Some(TenantId(id)),
+            Err(_) => {
+                tracing::warn!(value = %raw, "skipping unparseable tid_chain entry (ADR-0020)");
+                None
+            }
+        })
+        .collect();
+
     let ctx = AuthContext {
         tenant_id: TenantId(tenant_uuid),
         user_id: claims.sub,
         scopes: claims.scopes,
+        tenant_chain,
+        trust_tier: claims.trust_tier,
+        trust_class: claims.trust_class,
+        agent_id: claims.agent_id,
     };
 
     req.extensions_mut().insert(ctx);

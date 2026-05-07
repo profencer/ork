@@ -13,6 +13,10 @@ async fn inject_auth(mut req: Request, next: Next) -> Response {
         tenant_id: TenantId(Uuid::now_v7()),
         user_id: "tester".to_string(),
         scopes: vec!["a2a:send".to_string()],
+        tenant_chain: Vec::new(),
+        trust_tier: ork_common::auth::TrustTier::default(),
+        trust_class: ork_common::auth::TrustClass::default(),
+        agent_id: None,
     });
     next.run(req).await
 }

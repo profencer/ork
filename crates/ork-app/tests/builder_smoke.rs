@@ -48,6 +48,7 @@ struct MockWorkflow {
     description: String,
     tool_refs: Vec<String>,
     agent_refs: Vec<String>,
+    cron: Option<(String, String)>,
 }
 
 impl WorkflowDef for MockWorkflow {
@@ -77,6 +78,10 @@ impl WorkflowDef for MockWorkflow {
         Result<ork_core::ports::workflow_run::WorkflowRunHandle, OrkError>,
     > {
         Box::pin(async move { Ok(ImmediateWorkflowRunHandle::completed(input)) })
+    }
+
+    fn cron_trigger(&self) -> Option<(String, String)> {
+        self.cron.clone()
     }
 }
 
@@ -139,6 +144,7 @@ fn build_lists_agents_workflows_tools_in_manifest() {
         description: "demo".into(),
         tool_refs: vec!["echo".into()],
         agent_refs: vec!["alpha".into(), "beta".into()],
+        cron: None,
     };
 
     let app = OrkApp::builder()
@@ -230,6 +236,48 @@ fn workflow_unknown_tool_rejected() {
         description: "".into(),
         tool_refs: vec!["ghost-tool".into()],
         agent_refs: vec![],
+        cron: None,
     };
     assert!(OrkApp::builder().workflow(wf).build().is_err());
+}
+
+// ADR-0020 §A0: a cron-bearing workflow without a configured `system_tenant`
+// would have no real tenant id at fire time; once `TenantTxScope` enforces RLS
+// (later in Phase A), such a run would orphan rows or fail FK constraints. The
+// builder must reject this misconfiguration up front.
+#[test]
+fn cron_workflow_without_system_tenant_rejected() {
+    let wf = MockWorkflow {
+        id: "scheduled".into(),
+        description: "".into(),
+        tool_refs: vec![],
+        agent_refs: vec![],
+        cron: Some(("0 0 * * * *".into(), "UTC".into())),
+    };
+    let err = match OrkApp::builder().workflow(wf).build() {
+        Ok(_) => panic!("missing system_tenant must fail"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("scheduled") && msg.contains("system_tenant"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn cron_workflow_with_system_tenant_builds() {
+    use ork_common::types::TenantId;
+    let wf = MockWorkflow {
+        id: "scheduled".into(),
+        description: "".into(),
+        tool_refs: vec![],
+        agent_refs: vec![],
+        cron: Some(("0 0 * * * *".into(), "UTC".into())),
+    };
+    OrkApp::builder()
+        .workflow(wf)
+        .system_tenant(TenantId::new())
+        .build()
+        .expect("cron workflow with system_tenant must build");
 }

@@ -561,6 +561,10 @@ pub fn auth_for(tenant_id: TenantId) -> AuthContext {
         tenant_id,
         user_id: "test-user".into(),
         scopes: vec![],
+        tenant_chain: Vec::new(),
+        trust_tier: ork_common::auth::TrustTier::default(),
+        trust_class: ork_common::auth::TrustClass::default(),
+        agent_id: None,
     }
 }
 

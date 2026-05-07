@@ -528,6 +528,7 @@ impl WorkflowEngine {
                 tenant_id,
                 user_id: None,
                 scopes: vec![],
+                ..CallerIdentity::default()
             },
             push_notification_url: None,
             trace_ctx: None,
@@ -736,6 +737,7 @@ impl WorkflowEngine {
                 tenant_id,
                 user_id: None,
                 scopes: vec![],
+                ..CallerIdentity::default()
             },
             push_notification_url: spec.push_url.clone(),
             trace_ctx: None,

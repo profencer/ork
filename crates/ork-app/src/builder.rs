@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use ork_common::error::OrkError;
+use ork_common::types::TenantId;
 use ork_core::agent_registry::AgentRegistry;
 use ork_core::ports::agent::Agent;
 use ork_core::ports::id_generator::IdGenerator;
@@ -53,6 +54,9 @@ pub struct OrkAppBuilder {
     serve_backend: Option<Arc<dyn Server>>,
     request_context_schema: Option<Value>,
     id_generator: Option<Arc<dyn IdGenerator>>,
+    /// ADR-0020: tenant under which background-fired runs (cron, replay) execute.
+    /// Required when any registered workflow has a cron trigger.
+    system_tenant_id: Option<TenantId>,
     environment: Environment,
 }
 
@@ -146,6 +150,16 @@ impl OrkAppBuilder {
         self
     }
 
+    /// ADR-0020: tenant under which background-fired runs (cron, replay) execute.
+    /// Mandatory when any registered workflow has a cron trigger; otherwise a
+    /// scheduled run would have no real tenant id and would fail RLS / FK
+    /// constraints once `TenantTxScope` is wired in.
+    #[must_use]
+    pub fn system_tenant(mut self, tenant: TenantId) -> Self {
+        self.system_tenant_id = Some(tenant);
+        self
+    }
+
     /// Consume the builder after validating ids, duplicates, and workflow references.
     pub fn build(self) -> Result<OrkApp, OrkError> {
         validate_id_components(&self)?;
@@ -190,6 +204,16 @@ impl OrkAppBuilder {
                 )));
             }
             mcp_servers.push((mid, spec));
+        }
+
+        if self.system_tenant_id.is_none()
+            && let Some(wf) = workflows.values().find(|w| w.cron_trigger().is_some())
+        {
+            return Err(cfg(format!(
+                "workflow `{}` declares a cron trigger but no `system_tenant` is configured on the OrkAppBuilder; \
+                 background-fired runs need a real tenant id (ADR-0020)",
+                wf.id()
+            )));
         }
 
         for wf in workflows.values() {
@@ -250,6 +274,7 @@ impl OrkAppBuilder {
             request_context_schema: self.request_context_schema,
             id_generator: self.id_generator,
             environment: self.environment,
+            system_tenant_id: self.system_tenant_id,
             built_at,
             ork_version: env!("CARGO_PKG_VERSION").into(),
         });

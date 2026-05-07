@@ -83,6 +83,7 @@ impl GatewayAuthResolver for StaticGatewayAuthResolver {
             tenant_id,
             user_id,
             scopes,
+            ..CallerIdentity::default()
         })
     }
 }

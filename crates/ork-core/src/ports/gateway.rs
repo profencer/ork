@@ -237,6 +237,7 @@ mod tests {
             tenant_id: tenant,
             user_id: None,
             scopes: vec!["a2a.invoke".into()],
+            ..CallerIdentity::default()
         };
         let cancel = CancellationToken::new();
         let (ctx, msg) = TranslatedRequest {

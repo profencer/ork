@@ -106,6 +106,7 @@ fn ctx() -> AgentContext {
             tenant_id: tenant,
             user_id: None,
             scopes: vec![],
+            ..CallerIdentity::default()
         },
         push_notification_url: None,
         trace_ctx: Some("00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01".into()),

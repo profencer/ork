@@ -265,6 +265,7 @@ mod tests {
                 tenant_id: tenant,
                 user_id: None,
                 scopes: vec![],
+                ..ork_core::a2a::CallerIdentity::default()
             },
             push_notification_url: None,
             trace_ctx: None,
