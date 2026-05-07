@@ -90,7 +90,7 @@ async fn create_tenant(
     };
     tracing::info!(
         actor = %ctx.user_id,
-            tid_chain = ?ctx.tenant_chain,
+        tid_chain = ?ctx.tenant_chain,
         tenant_id = %ctx.tenant_id,
         action = "tenant.create",
         resource = %req.slug,
@@ -126,7 +126,7 @@ async fn list_tenants(
     };
     tracing::info!(
         actor = %ctx.user_id,
-            tid_chain = ?ctx.tenant_chain,
+        tid_chain = ?ctx.tenant_chain,
         tenant_id = %ctx.tenant_id,
         action = "tenant.list",
         resource = "*",
@@ -165,7 +165,7 @@ async fn get_tenant(
     };
     tracing::info!(
         actor = %ctx.user_id,
-            tid_chain = ?ctx.tenant_chain,
+        tid_chain = ?ctx.tenant_chain,
         tenant_id = %ctx.tenant_id,
         action = "tenant.read",
         resource = %id,
@@ -210,7 +210,7 @@ async fn update_tenant_settings(
     };
     tracing::info!(
         actor = %ctx.user_id,
-            tid_chain = ?ctx.tenant_chain,
+        tid_chain = ?ctx.tenant_chain,
         tenant_id = %ctx.tenant_id,
         action = "tenant.update_settings",
         resource = %id,
@@ -247,7 +247,7 @@ async fn delete_tenant(
     };
     tracing::info!(
         actor = %ctx.user_id,
-            tid_chain = ?ctx.tenant_chain,
+        tid_chain = ?ctx.tenant_chain,
         tenant_id = %ctx.tenant_id,
         action = "tenant.delete",
         resource = %id,

@@ -23,10 +23,11 @@ pub struct CallerIdentity {
     pub user_id: Option<UserId>,
     pub scopes: Vec<String>,
     /// ADR-0020 §`Tenant id propagation across delegation`: ordered list of
-    /// tenant ids whose trust boundaries this request crossed before reaching
-    /// the current handler. Empty for top-level (single-hop) calls. Phase B
-    /// populates this on outbound `child_for_delegation` when the target's
-    /// tenant differs from the source.
+    /// tenant ids this request has been bound to so far. Canonical default
+    /// (set by `auth_middleware` for tokens that omit `tid_chain`) is
+    /// `[tenant_id]` — `chain.len() == 1` ⇔ no trust-boundary crossing.
+    /// Phase B extends this on outbound `child_for_delegation` when the
+    /// target's tenant differs from the source.
     pub tenant_chain: Vec<TenantId>,
     /// ADR-0020 §`Mesh trust`: defaults to [`TrustTier::Internal`].
     pub trust_tier: TrustTier,

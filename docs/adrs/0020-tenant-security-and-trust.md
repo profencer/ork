@@ -169,3 +169,22 @@ Every cross-trust-tier action emits a structured `tracing` event with attributes
 - Kong jwt-signer plugin: <https://docs.konghq.com/hub/kong-inc/jwt-signer/>
 - Kafka SASL/OAUTHBEARER: <https://kafka.apache.org/documentation/#security_sasl_oauthbearer>
 - AWS KMS, GCP KMS, Azure Key Vault, Vault Transit
+
+## Reviewer findings
+
+Phase A (`feat(adr0020-a): cron tenant fix + enriched JWT/AuthContext + scope vocab` and the A3-A8 follow-up).
+
+| Severity | Finding | Resolution |
+| -------- | ------- | ---------- |
+| Critical | Migration `010_rls_policies.sql` enabled RLS + policies on `webui_projects` / `webui_conversations`, but `webui_store` does not bind `app.current_tenant_id` via `open_tenant_tx` — under a non-superuser ork-api role this would deny-all (or hard-error on cast) on every webui read. | Fixed in-session: trimmed migration 010 to only DISABLE RLS on `tenants`. The webui-table policies will land alongside the matching `webui_store` repo migration in a Phase A follow-up commit. |
+| Major | `auth_middleware` propagated `tid_chain = []` verbatim from legacy JWTs, contradicting ADR §`Mesh trust — JWT claims and propagation` (canonical default `[tenant_id]`). Phase B's cross-tenant policy gate would have seen an empty chain on every legacy single-hop call. | Fixed in-session: `auth_middleware` now seeds `tenant_chain = [tenant_id]` when the JWT omits `tid_chain`. `CallerIdentity::tenant_chain` doc and the `auth_for_with_scopes` test helper updated to match. |
+| Major | RLS smoke test asserted only read-side isolation; the existing `001_initial.sql` policies on `workflow_definitions` / `workflow_runs` carried `USING` only (no `WITH CHECK`), so a session under tenant A's GUC could persist a row owned by tenant B. | Fixed in-session: new `migrations/011_rls_workflow_with_check.sql` re-creates both policies with matching `WITH CHECK`; new test `cross_tenant_insert_under_a_blocked_by_with_check` asserts SQLSTATE `42501` on a forged INSERT. |
+| Major | Migration 010's role contract was implicit (operators reading `migrations/` would not know "non-superuser ork-api role" is now a hard requirement). | Fixed in-session: migration 010 now opens with an explicit ROLE CONTRACT FOR THIS MIGRATION block enumerating the constraint and the per-repo migration status. |
+| Minor | `set_config(..., true)` binding required `to_string()` because the function takes `text` args; future "simplify the bind" patches could regress. | Fixed in-session: comment in `tenant_scope.rs` documents the type contract. |
+| Minor | `role_bypasses_rls` checked `is_superuser` only and would silently skip the assertion under a non-superuser `BYPASSRLS` role. | Fixed in-session: helper now also reads `pg_roles.rolbypassrls` for `current_user`. |
+| Minor | Stale `// TODO: Run with database in testconatiners` comment (typo) in `rls_smoke.rs`. | Fixed in-session: removed. |
+| Minor | `delete_tenant` allows admins to delete the tenant a token is bound to — a foot-gun, not an ADR violation. | Acknowledged, deferred to a Phase B follow-up; ADR §`Tenant CRUD restricted` mandates `tenant:admin` only and is silent on self-deletion. |
+| Minor | `audit_result` collapses 401/403 to `forbidden` but tenant handlers only ever produce 403 (401 is upstream in `auth_middleware`). | Acknowledged, deferred; the helper is shared shape and narrowing is cheap but not load-bearing. |
+| Nit | `tid_chain` over-indented in result-branch `tracing::info!` invocations on `tenants.rs`. | Fixed in-session: re-indented 5 occurrences. |
+| Nit | `CallerIdentity::tenant_chain` doc said "Empty for top-level (single-hop) calls"; ADR canonical default is `[tenant_id]`. | Fixed in-session: doc rewritten to match the ADR. |
+| Nit | Mod doc on `postgres/mod.rs` implied `tenants` was never RLS-enabled. | Fixed in-session: now states `001_initial.sql` enabled it without a policy and `migrations/010` disables it. |

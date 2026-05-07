@@ -568,7 +568,9 @@ pub fn auth_for_with_scopes(tenant_id: TenantId, scopes: &[&str]) -> AuthContext
         tenant_id,
         user_id: "test-user".into(),
         scopes: scopes.iter().map(|s| (*s).to_string()).collect(),
-        tenant_chain: Vec::new(),
+        // Mirror `auth_middleware`'s canonical default for `tid_chain` per
+        // ADR-0020 §`Mesh trust — JWT claims and propagation`.
+        tenant_chain: vec![tenant_id],
         trust_tier: ork_common::auth::TrustTier::default(),
         trust_class: ork_common::auth::TrustClass::default(),
         agent_id: None,

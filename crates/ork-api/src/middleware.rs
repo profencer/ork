@@ -84,8 +84,12 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
     // translated to typed `TenantId`s; entries that fail to parse are dropped
     // (the chain is informational/audit, not an authorisation primitive on
     // its own) and a single warning is logged so the operator sees malformed
-    // tokens.
-    let tenant_chain: Vec<TenantId> = claims
+    // tokens. ADR-0020 §`Mesh trust — JWT claims and propagation` specifies
+    // the canonical default for `tid_chain` is `[tenant_id]`; legacy tokens
+    // that omit the field land here as an empty Vec, so we seed it so
+    // downstream cross-tenant policy checks always see a non-empty chain
+    // (`chain.len() == 1` ⇔ no trust-boundary crossing).
+    let mut tenant_chain: Vec<TenantId> = claims
         .tid_chain
         .iter()
         .filter_map(|raw| match Uuid::parse_str(raw) {
@@ -96,6 +100,9 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
             }
         })
         .collect();
+    if tenant_chain.is_empty() {
+        tenant_chain.push(TenantId(tenant_uuid));
+    }
 
     let ctx = AuthContext {
         tenant_id: TenantId(tenant_uuid),

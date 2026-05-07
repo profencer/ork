@@ -1,32 +1,35 @@
--- ADR-0020 §`Mesh trust — JWT claims and propagation`: RLS policies for
--- tenant-scoped tables introduced after `001_initial.sql`. The
--- `current_setting('app.current_tenant_id')::UUID` GUC is bound by the
--- `open_tenant_tx` helper in `ork-persistence::postgres::tenant_scope`.
+-- ADR-0020 §`Mesh trust — JWT claims and propagation` and §`Tenant CRUD
+-- restricted`: row-level security follow-ups for tables added after
+-- `001_initial.sql`.
 --
--- Each policy carries both `USING` (read/qualifier check) and `WITH CHECK`
--- (write check) so INSERTs are guarded by the same predicate as reads —
--- without `WITH CHECK`, a row could be inserted with a tenant_id that the
--- caller would then be unable to see.
+-- ROLE CONTRACT FOR THIS MIGRATION
+-- --------------------------------
+-- The new RLS policies attached here read
+-- `current_setting('app.current_tenant_id')::UUID`. That GUC is bound by
+-- `ork-persistence::postgres::tenant_scope::open_tenant_tx`. **Enabling RLS
+-- on a table is only safe once the repository serving that table routes its
+-- reads and writes through `open_tenant_tx`** — otherwise the policy will
+-- either silently bypass (under a superuser / `BYPASSRLS` role) or hard-error
+-- on cast (under a non-superuser role) on every query that hits an unset
+-- GUC. Operators deploying ork must therefore:
 --
--- Tables in scope:
---   - `webui_projects`        (introduced in 008_webui_projects.sql)
---   - `webui_conversations`   (introduced in 008_webui_projects.sql)
+--   1. Run as a non-superuser, non-`BYPASSRLS` Postgres role for RLS to be
+--      load-bearing (production posture documented in ADR-0020).
+--   2. Migrate the corresponding repository to `open_tenant_tx` *before* the
+--      migration that enables RLS on its table lands.
 --
--- NOT in scope:
---   - `workflow_snapshots` (009): no `tenant_id` column; needs a
+-- Repo-by-repo migration status at the time this file ships:
+--   - `workflow_definitions`, `workflow_runs` — `workflow_repo` is on
+--     `open_tenant_tx`; policies live in `001_initial.sql`. See migration
+--     011 for the `WITH CHECK` follow-up that closes write-side enforcement.
+--   - `webui_projects`, `webui_conversations` — `webui_store` still queries
+--     the pool directly. Policies for these tables are *deliberately not
+--     attached here*; they will land alongside the matching repo migration.
+--   - `workflow_snapshots` (009) — has no `tenant_id` column; needs a
 --     denormalisation migration before RLS can match the existing
 --     `tenant_isolation_*` policy shape. Tracked as an ADR-0020 follow-up.
---   - `a2a_signing_keys` (005): KEK-protected, not tenant-scoped (ADR-0009).
-
-ALTER TABLE webui_projects ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation_webui_projects ON webui_projects
-    USING      (tenant_id = current_setting('app.current_tenant_id')::UUID)
-    WITH CHECK (tenant_id = current_setting('app.current_tenant_id')::UUID);
-
-ALTER TABLE webui_conversations ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation_webui_conversations ON webui_conversations
-    USING      (tenant_id = current_setting('app.current_tenant_id')::UUID)
-    WITH CHECK (tenant_id = current_setting('app.current_tenant_id')::UUID);
+--   - `a2a_signing_keys` (005) — KEK-protected, not tenant-scoped (ADR-0009).
+--   - `tenant_repo`-served `tenants` — see below.
 
 -- ADR-0020 §`Tenant CRUD restricted`: `tenants` is admin-managed across
 -- tenants and gated by `tenant:admin` / `tenant:self` scope checks at the

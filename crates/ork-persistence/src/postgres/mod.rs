@@ -9,8 +9,12 @@
 //! incrementally in follow-up commits (a2a_task_repo, a2a_push_repo,
 //! a2a_push_dead_letter_repo, artifact_meta_repo, webui_store,
 //! workflow_snapshot_repo). [`tenant_repo`] and [`a2a_signing_key_repo`] are
-//! special: tenants are admin-managed across tenants and signing keys are
-//! KEK-protected (ADR-0009) — neither is row-level-secured today.
+//! special: `tenants` had RLS enabled in `001_initial.sql:45` without a
+//! matching policy (deny-all under any non-owner role) and is explicitly
+//! *disabled* by `migrations/010_rls_policies.sql` — the table is
+//! admin-managed across tenants and gated at the HTTP scope layer (ADR-0020
+//! §`Tenant CRUD restricted`). `a2a_signing_keys` was never RLS-enabled
+//! because the rows are KEK-protected (ADR-0009).
 
 pub mod a2a_push_dead_letter_repo;
 pub mod a2a_push_repo;

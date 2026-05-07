@@ -46,6 +46,9 @@ pub async fn open_tenant_tx(
         .await
         .map_err(|e| OrkError::Database(format!("open tenant tx: {e}")))?;
 
+    // `set_config(text, text, bool)` — the second arg is `text`, so we bind
+    // a string. Binding a `Uuid` would coerce sqlx to send it as `uuid` and
+    // Postgres would reject the call. Do not "simplify" this to `tenant_id.0`.
     sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
         .bind(tenant_id.0.to_string())
         .execute(&mut *tx)
