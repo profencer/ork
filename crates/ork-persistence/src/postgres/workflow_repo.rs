@@ -10,6 +10,8 @@ use ork_core::models::workflow::{
 };
 use ork_core::ports::repository::WorkflowRepository;
 
+use crate::postgres::tenant_scope::open_tenant_tx;
+
 pub struct PgWorkflowRepository {
     pool: PgPool,
 }
@@ -33,6 +35,11 @@ impl WorkflowRepository for PgWorkflowRepository {
         let steps_json = serde_json::to_value(&def.steps)
             .map_err(|e| OrkError::Internal(format!("serialize steps: {e}")))?;
 
+        // ADR-0020: every query in this fn runs inside a tx with
+        // `app.current_tenant_id` bound, so the `tenant_isolation_definitions`
+        // policy on `workflow_definitions` enforces the WHERE clause we have
+        // not yet written. Same pattern below.
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         sqlx::query(
             r#"
             INSERT INTO workflow_definitions (id, tenant_id, name, version, trigger, steps, created_at, updated_at)
@@ -47,9 +54,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         .bind(&steps_json)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("create workflow definition: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| OrkError::Database(format!("commit create_definition: {e}")))?;
 
         Ok(WorkflowDefinition {
             created_at: now,
@@ -63,6 +73,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         tenant_id: TenantId,
         id: WorkflowId,
     ) -> Result<WorkflowDefinition, OrkError> {
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         let row = sqlx::query_as::<_, WorkflowDefRow>(
             r#"
             SELECT id, tenant_id, name, version, trigger, steps, created_at, updated_at
@@ -72,10 +83,11 @@ impl WorkflowRepository for PgWorkflowRepository {
         )
         .bind(id.0)
         .bind(tenant_id.0)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("get workflow definition: {e}")))?
         .ok_or_else(|| OrkError::NotFound(format!("workflow definition {id}")))?;
+        // Read-only path; tx auto-rollbacks on drop, no commit needed.
 
         row.into_definition()
     }
@@ -84,6 +96,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         &self,
         tenant_id: TenantId,
     ) -> Result<Vec<WorkflowDefinition>, OrkError> {
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         let rows = sqlx::query_as::<_, WorkflowDefRow>(
             r#"
             SELECT id, tenant_id, name, version, trigger, steps, created_at, updated_at
@@ -93,7 +106,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             "#,
         )
         .bind(tenant_id.0)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("list workflow definitions: {e}")))?;
 
@@ -101,17 +114,21 @@ impl WorkflowRepository for PgWorkflowRepository {
     }
 
     async fn delete_definition(&self, tenant_id: TenantId, id: WorkflowId) -> Result<(), OrkError> {
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         let result =
             sqlx::query("DELETE FROM workflow_definitions WHERE id = $1 AND tenant_id = $2")
                 .bind(id.0)
                 .bind(tenant_id.0)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| OrkError::Database(format!("delete workflow definition: {e}")))?;
 
         if result.rows_affected() == 0 {
             return Err(OrkError::NotFound(format!("workflow definition {id}")));
         }
+        tx.commit()
+            .await
+            .map_err(|e| OrkError::Database(format!("commit delete_definition: {e}")))?;
         Ok(())
     }
 
@@ -119,6 +136,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         let step_results_json = serde_json::to_value(&run.step_results)
             .map_err(|e| OrkError::Internal(format!("serialize step results: {e}")))?;
 
+        let mut tx = open_tenant_tx(&self.pool, run.tenant_id).await?;
         sqlx::query(
             r#"
             INSERT INTO workflow_runs (
@@ -140,9 +158,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         .bind(run.parent_run_id.map(|id| id.0))
         .bind(&run.parent_step_id)
         .bind(run.parent_task_id.map(|id| id.0))
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("create workflow run: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| OrkError::Database(format!("commit create_run: {e}")))?;
 
         Ok(run.clone())
     }
@@ -152,6 +173,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         tenant_id: TenantId,
         id: WorkflowRunId,
     ) -> Result<WorkflowRun, OrkError> {
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         let row = sqlx::query_as::<_, WorkflowRunRow>(
             r#"
             SELECT id, workflow_id, tenant_id, status, input, output, step_results,
@@ -162,7 +184,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         )
         .bind(id.0)
         .bind(tenant_id.0)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("get workflow run: {e}")))?
         .ok_or_else(|| OrkError::NotFound(format!("workflow run {id}")))?;
@@ -175,6 +197,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         tenant_id: TenantId,
         workflow_id: Option<WorkflowId>,
     ) -> Result<Vec<WorkflowRun>, OrkError> {
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         let rows = if let Some(wf_id) = workflow_id {
             sqlx::query_as::<_, WorkflowRunRow>(
                 r#"
@@ -187,7 +210,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             )
             .bind(tenant_id.0)
             .bind(wf_id.0)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
         } else {
             sqlx::query_as::<_, WorkflowRunRow>(
@@ -200,7 +223,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 "#,
             )
             .bind(tenant_id.0)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
         }
         .map_err(|e| OrkError::Database(format!("list workflow runs: {e}")))?;
@@ -227,6 +250,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             None
         };
 
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         sqlx::query(
             r#"
             UPDATE workflow_runs
@@ -239,9 +263,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         .bind(now)
         .bind(id.0)
         .bind(tenant_id.0)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("update run status: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| OrkError::Database(format!("commit update_run_status: {e}")))?;
 
         Ok(())
     }
@@ -255,6 +282,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         let step_json = serde_json::to_value(step_result)
             .map_err(|e| OrkError::Internal(format!("serialize step result: {e}")))?;
 
+        let mut tx = open_tenant_tx(&self.pool, tenant_id).await?;
         sqlx::query(
             r#"
             UPDATE workflow_runs
@@ -265,9 +293,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         .bind(serde_json::json!([step_json]))
         .bind(run_id.0)
         .bind(tenant_id.0)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| OrkError::Database(format!("append step result: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| OrkError::Database(format!("commit append_step_result: {e}")))?;
 
         Ok(())
     }

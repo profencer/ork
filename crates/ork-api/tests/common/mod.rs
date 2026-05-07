@@ -557,10 +557,17 @@ pub async fn test_state_with_agents(agent_ids: &[&str]) -> TestState {
 
 /// `AuthContext` extension for direct extension-injection (skips JWT decode).
 pub fn auth_for(tenant_id: TenantId) -> AuthContext {
+    auth_for_with_scopes(tenant_id, &[])
+}
+
+/// Same as [`auth_for`] but with an explicit scope list. ADR-0020 added
+/// scope-gated routes; tests targeting those should use this so the JWT
+/// shape mirrors what `auth_middleware` would have built from a real token.
+pub fn auth_for_with_scopes(tenant_id: TenantId, scopes: &[&str]) -> AuthContext {
     AuthContext {
         tenant_id,
         user_id: "test-user".into(),
-        scopes: vec![],
+        scopes: scopes.iter().map(|s| (*s).to_string()).collect(),
         tenant_chain: Vec::new(),
         trust_tier: ork_common::auth::TrustTier::default(),
         trust_class: ork_common::auth::TrustClass::default(),
