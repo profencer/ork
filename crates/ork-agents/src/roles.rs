@@ -1,3 +1,13 @@
+//! Pre-baked role agents for demos and the cross-repo planning workflow.
+//!
+//! ADR-0052 Phase 5 reauthored writer / reviewer / synthesizer with the
+//! [`CodeAgent`](crate::code_agent::CodeAgent) DSL. Planner and researcher
+//! still construct via [`LocalAgent`] because they consume the tool-catalog
+//! allow-list path: their tools (e.g. `list_repos`, `code_search`) are
+//! discovered at request time from the ambient native-tool catalog rather
+//! than supplied at build time. Once the catalog→`Vec<Arc<dyn ToolDef>>`
+//! resolution moves up to `OrkApp::build()` (follow-up to ADR-0049), they
+//! can move to the builder shape too.
 use std::sync::Arc;
 
 use ork_core::a2a::card_builder::CardEnrichmentContext;
@@ -5,6 +15,7 @@ use ork_core::models::agent::AgentConfig;
 use ork_core::ports::agent::Agent;
 use ork_core::ports::llm::LlmProvider;
 
+use crate::CodeAgent;
 use crate::local::LocalAgent;
 use crate::tool_catalog::ToolCatalogBuilder;
 
@@ -83,12 +94,7 @@ Rules:
     }
 }
 
-pub fn writer_config() -> AgentConfig {
-    AgentConfig {
-        id: "writer".into(),
-        name: "Writer".into(),
-        description: "Produces clear written content from structured inputs.".into(),
-        system_prompt: r#"You are a Writer agent for a DevOps automation platform.
+const WRITER_INSTRUCTIONS: &str = r#"You are a Writer agent for a DevOps automation platform.
 
 Your responsibilities:
 - Produce clear, professional written content from structured data
@@ -111,26 +117,9 @@ For release notes:
 For deployment notifications:
 - Lead with status (success/failure)
 - Include what changed and who deployed
-- Add relevant pipeline links"#
-            .into(),
-        tools: vec![],
-        provider: None,
-        model: None,
-        temperature: 0.4,
-        max_tokens: 4096,
-        max_tool_iterations: ork_core::models::agent::default_max_tool_iterations(),
-        max_parallel_tool_calls: ork_core::models::agent::default_max_parallel_tool_calls(),
-        max_tool_result_bytes: ork_core::models::agent::default_max_tool_result_bytes(),
-        expose_reasoning: false,
-    }
-}
+- Add relevant pipeline links"#;
 
-pub fn reviewer_config() -> AgentConfig {
-    AgentConfig {
-        id: "reviewer".into(),
-        name: "Reviewer".into(),
-        description: "Reviews agent output for quality and completeness.".into(),
-        system_prompt: r#"You are a Reviewer agent for a DevOps automation platform.
+const REVIEWER_INSTRUCTIONS: &str = r#"You are a Reviewer agent for a DevOps automation platform.
 
 Your responsibilities:
 - Review content produced by other agents for accuracy and completeness
@@ -142,40 +131,63 @@ Output format:
 - Start with "VERDICT: PASS" or "VERDICT: FAIL"
 - If PASS: briefly note what looks good
 - If FAIL: list specific issues that need fixing, each on its own line
-- Be constructive and actionable in feedback"#
-            .into(),
-        tools: vec![],
-        provider: None,
-        model: None,
-        temperature: 0.1,
-        max_tokens: 2048,
-        max_tool_iterations: ork_core::models::agent::default_max_tool_iterations(),
-        max_parallel_tool_calls: ork_core::models::agent::default_max_parallel_tool_calls(),
-        max_tool_result_bytes: ork_core::models::agent::default_max_tool_result_bytes(),
-        expose_reasoning: false,
-    }
+- Be constructive and actionable in feedback"#;
+
+const SYNTHESIZER_INSTRUCTIONS: &str = r#"You are a Synthesizer agent. Merge multi-repository research into one coherent change plan.
+Explicitly call out ordering, shared APIs and schemas, event contracts, data dependencies, and risks.
+Prefer structured JSON when the workflow requests it."#;
+
+/// Default model used by the role agents when the operator/tenant catalog has
+/// no override. The provider/model resolution chain (ADR-0012) overrides this
+/// at request time.
+const DEFAULT_ROLE_MODEL: &str = "openai/gpt-4o-mini";
+
+#[must_use]
+pub fn writer_code_agent(card_ctx: &CardEnrichmentContext, llm: Arc<dyn LlmProvider>) -> CodeAgent {
+    CodeAgent::builder("writer")
+        .description("Produces clear written content from structured inputs.")
+        .instructions(WRITER_INSTRUCTIONS)
+        .model(DEFAULT_ROLE_MODEL)
+        .temperature(0.4)
+        .max_tokens(4096)
+        .card_context(card_ctx.clone())
+        .llm(llm)
+        .build()
+        .expect("writer CodeAgent: required fields are set above")
 }
 
-/// Synthesizer used by some workflow templates (e.g. cross-repo planning).
-pub fn synthesizer_config() -> AgentConfig {
-    AgentConfig {
-        id: "synthesizer".into(),
-        name: "Synthesizer".into(),
-        description: "Merges multi-repository research into one coherent change plan.".into(),
-        system_prompt: r#"You are a Synthesizer agent. Merge multi-repository research into one coherent change plan.
-Explicitly call out ordering, shared APIs and schemas, event contracts, data dependencies, and risks.
-Prefer structured JSON when the workflow requests it."#
-            .into(),
-        tools: vec![],
-        provider: None,
-        model: None,
-        temperature: 0.2,
-        max_tokens: 8192,
-        max_tool_iterations: ork_core::models::agent::default_max_tool_iterations(),
-        max_parallel_tool_calls: ork_core::models::agent::default_max_parallel_tool_calls(),
-        max_tool_result_bytes: ork_core::models::agent::default_max_tool_result_bytes(),
-        expose_reasoning: false,
-    }
+#[must_use]
+pub fn reviewer_code_agent(
+    card_ctx: &CardEnrichmentContext,
+    llm: Arc<dyn LlmProvider>,
+) -> CodeAgent {
+    CodeAgent::builder("reviewer")
+        .description("Reviews agent output for quality and completeness.")
+        .instructions(REVIEWER_INSTRUCTIONS)
+        .model(DEFAULT_ROLE_MODEL)
+        .temperature(0.1)
+        .max_tokens(2048)
+        .card_context(card_ctx.clone())
+        .llm(llm)
+        .build()
+        .expect("reviewer CodeAgent: required fields are set above")
+}
+
+#[must_use]
+pub fn synthesizer_code_agent(
+    card_ctx: &CardEnrichmentContext,
+    llm: Arc<dyn LlmProvider>,
+) -> CodeAgent {
+    CodeAgent::builder("synthesizer")
+        .description("Merges multi-repository research into one coherent change plan.")
+        .instructions(SYNTHESIZER_INSTRUCTIONS)
+        .model(DEFAULT_ROLE_MODEL)
+        .temperature(0.2)
+        .max_tokens(8192)
+        .card_context(card_ctx.clone())
+        .llm(llm)
+        .build()
+        .expect("synthesizer CodeAgent: required fields are set above")
 }
 
 #[must_use]
@@ -191,18 +203,10 @@ pub fn seed_local_agents(
         ),
         Arc::new(
             LocalAgent::new(researcher_config(), card_ctx, llm.clone())
-                .with_tool_catalog(tool_catalog.clone()),
+                .with_tool_catalog(tool_catalog),
         ),
-        Arc::new(
-            LocalAgent::new(writer_config(), card_ctx, llm.clone())
-                .with_tool_catalog(tool_catalog.clone()),
-        ),
-        Arc::new(
-            LocalAgent::new(reviewer_config(), card_ctx, llm.clone())
-                .with_tool_catalog(tool_catalog.clone()),
-        ),
-        Arc::new(
-            LocalAgent::new(synthesizer_config(), card_ctx, llm).with_tool_catalog(tool_catalog),
-        ),
+        Arc::new(writer_code_agent(card_ctx, llm.clone())),
+        Arc::new(reviewer_code_agent(card_ctx, llm.clone())),
+        Arc::new(synthesizer_code_agent(card_ctx, llm)),
     ]
 }

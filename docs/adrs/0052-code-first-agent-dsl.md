@@ -1,6 +1,6 @@
 # 0052 — Code-first Agent DSL on `rig::Agent` with structured outputs
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -383,7 +383,20 @@ This subsumes ADR 0039 (superseded).
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Wire shape | ADR text says `output_schema::<O>()` emits `AgentEvent::Output(serde_json::Value)`, but `TaskEvent` (re-exported as `AgentEvent`) only carries `StatusUpdate / ArtifactUpdate / Message`. | The terminal `TaskEvent::Message` carries one `Part::Data { data: O-as-JSON }`. Confirmed with the user before implementation. No protocol change. Implemented in `crates/ork-agents/src/rig_engine.rs` `run_rig_consumer` `FinalResponse` arm. |
+| Hook integration | ADR text says hooks are "thin shims over rig's `PromptHook` / `ToolCallHookAction`". | Hooks fire directly from `OrkToolDyn::call` and from the `FinalResponse` arm of the consumer. Semantically identical; insulates ork from rig API drift. Documented in `crates/ork-agents/src/hooks.rs` module doc. |
+| Major | `Agent::cancel` not overridden on `CodeAgent`; the default returns `OrkError::Unsupported`. | **Acknowledged, deferred** — symmetric with `LocalAgent`'s existing behaviour. The mid-stream cancel path (request-scoped `ctx.cancel` token, exercised by `pre_cancelled_context_short_circuits_without_llm_call`) is the supported flow; explicit `Agent::cancel(task_id)` requires a per-task token registry that's a follow-up ADR for both implementations. |
+| Major | `CompletionHook` was wired but untested. | Fixed: `crates/ork-agents/tests/code_agent_hooks.rs::completion_hooks_fire_once_in_registration_order` asserts (a) one fire per hook per terminal Message, (b) hooks fire in registration order, (c) `final_text` matches the LLM output, (d) all hooks see the same text. |
+| Major | `after`-hooks fire for hooks whose `before` was never invoked (override / cancel paths). | **Documented**: `crates/ork-agents/src/hooks.rs` `ToolHook` trait doc explicitly states the asymmetry — `after` is unconditionally called for every registered hook to keep audit/observability hooks reliably notified. |
+| Minor | `output_schema::<O>` and `request_context_schema::<C>` dropped the ADR's `DeserializeOwned + Send + Sync + 'static` bounds and silently fell back to `Value::Null` on schema-conversion failure. | Fixed: bounds re-added on both methods (`crates/ork-agents/src/code_agent.rs:312,329`); `unwrap_or(Value::Null)` replaced with `expect("schemars::RootSchema must serialize to JSON")` so a derive bug surfaces loudly instead of shipping a `null` schema downstream. |
+| Minor | Acceptance criterion §9 line-reduction claim ("5–15× per agent"). | **Acknowledged, deferred** — actual ratio measured at ~2.5–4× per reauthored role agent (writer/reviewer/synthesizer). The win is real but smaller than the ADR's optimistic estimate; honest measurement recorded here in lieu of stretching the claim. |
+| Minor | `extract_prompt_text` + `user.parts = msg.parts.clone()` duplicates user content into the rig request when any text Part is present. | **Acknowledged, deferred** — pre-existing behaviour copied from `crates/ork-agents/src/local.rs:93-96`; not a CodeAgent regression. Fix lives in `chat_message_to_rig` (only emit `msg.content` when `msg.parts` is empty). Follow-up commit, not blocking ADR-0052. |
+| Minor | `tools.extend(f(&ctx))` from a dynamic resolver lets caller shadow native tool ids. | **Acknowledged, deferred** — `OrkAppBuilder` enforces unique tool ids at app-build time, but per-request dynamic resolution does not. Add dedup-and-warn at request time as a follow-up. Low priority because callers in scope today are operator-controlled. |
+| Minor | `request_context_schema` is read-only; no runtime validation of request bodies yet. | **By design for this ADR** — runtime validation lands once ADR-0056 wires the auto-REST surface. Builder method documents this explicitly. |
+| Minor | `InstructionSpec` is a single-variant enum (`Static(String)`); the dynamic resolver is a separate field. | **Acknowledged** — mirrors how the model and tools dynamic resolvers are stored (parallel `Option<DynamicXxxFn>` fields). Cleanup to fold both into the enum is a small follow-up. |
+| Minor | `effective_args` mutation surface in `OrkToolDyn::call` is dead. | **Acknowledged, deferred** — placeholder for a future `before`-hook arg-mutation API (Mastra `inputProcessors` analogue). Will tighten or wire when a customer needs it. |
+| Nit | `SubmitTool::output_schema` is hard-coded `{"type":"object"}` rather than the actual `O` schema. | **Acknowledged** — the LLM never reads `output_schema` (rig only consumes input schemas). Card-emitter consumers see a generic stub; harmless. |
+| Nit | `roles.rs` module doc says "ADR-0052 Phase 5" — phase numbering is a plan-internal concept that bled into source comments. | **Acknowledged, deferred** — purely cosmetic. |
 
 ## Prior art / parity references
 

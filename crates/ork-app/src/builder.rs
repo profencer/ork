@@ -235,6 +235,42 @@ impl OrkAppBuilder {
             }
         }
 
+        // ADR-0052: agents may reference peer agents (`agent_as_tool`),
+        // workflows (`workflow_as_tool`), and MCP servers (`tool_server`).
+        // Validate each ref resolves on the same builder; order is irrelevant
+        // (forward refs are allowed because validation happens once after all
+        // registrations).
+        let mcp_ids: HashSet<&str> = mcp_servers.iter().map(|(id, _)| id.as_str()).collect();
+        for agent in agents.values() {
+            let aid = agent.id().as_str();
+            for peer in agent.referenced_agent_ids() {
+                if !agents.contains_key(peer.as_str()) {
+                    return Err(cfg(format!(
+                        "agent `{aid}` references agent `{peer}` which is not registered on this builder"
+                    )));
+                }
+                if peer == aid {
+                    return Err(cfg(format!(
+                        "agent `{aid}` references itself via agent_as_tool; self-delegation cycles are rejected at build time"
+                    )));
+                }
+            }
+            for wid in agent.referenced_workflow_ids() {
+                if !workflows.contains_key(wid.as_str()) {
+                    return Err(cfg(format!(
+                        "agent `{aid}` references workflow `{wid}` which is not registered on this builder"
+                    )));
+                }
+            }
+            for sid in agent.referenced_mcp_server_ids() {
+                if !mcp_ids.contains(sid.as_str()) {
+                    return Err(cfg(format!(
+                        "agent `{aid}` references MCP server `{sid}` which is not registered on this builder"
+                    )));
+                }
+            }
+        }
+
         for binding in &self.scorers {
             let target_id = match &binding.target {
                 ScorerTarget::Agent { id } | ScorerTarget::Workflow { id } => id,

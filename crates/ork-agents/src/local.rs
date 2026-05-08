@@ -159,6 +159,7 @@ impl Agent for LocalAgent {
                 tool_defs,
                 user.clone(),
                 vec![], // preamble only; Rig `AgentBuilder.preamble(system_prompt)`
+                crate::rig_engine::RigEngineHooks::default(),
             )
             .await
             {

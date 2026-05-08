@@ -155,7 +155,7 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0049](0049-orkapp-central-registry.md) | `OrkApp` central registry: code-first project entry point | Accepted | 4 |
 | [0050](0050-code-first-workflow-dsl.md) | Code-first Workflow DSL with typed steps and suspend/resume | Implemented | 4 |
 | [0051](0051-code-first-tool-dsl.md) | Code-first Tool DSL on `rig::Tool` with typed Args/Output | Accepted | 4 |
-| [0052](0052-code-first-agent-dsl.md) | Code-first Agent DSL on `rig::Agent` with structured outputs | Proposed | 4 |
+| [0052](0052-code-first-agent-dsl.md) | Code-first Agent DSL on `rig::Agent` with structured outputs | Implemented | 4 |
 | [0053](0053-memory-working-and-semantic.md) | Memory: working memory + semantic recall, threads and resources | Proposed | 4 |
 | [0054](0054-live-scorers-and-eval-corpus.md) | Live scorers and offline eval corpus | Proposed | 4 |
 | [0055](0055-studio-local-dev-ui.md) | Studio: local dev UI for chat, workflows, memory, traces, scorers | Proposed | 4 |

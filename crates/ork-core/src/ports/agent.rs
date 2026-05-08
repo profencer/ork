@@ -38,4 +38,29 @@ pub trait Agent: Send + Sync {
     async fn cancel(&self, _ctx: AgentContext, _task_id: &TaskId) -> Result<(), OrkError> {
         Err(OrkError::Unsupported("cancel".into()))
     }
+
+    /// Ids of *peer agents* this agent depends on (e.g., via
+    /// [ADR-0052](../../../docs/adrs/0052-code-first-agent-dsl.md)
+    /// `agent_as_tool`). Symmetric with
+    /// [`WorkflowDef::referenced_agent_ids`](crate::ports::workflow_def::WorkflowDef::referenced_agent_ids):
+    /// `OrkAppBuilder::build()` validates each id is registered in the same app.
+    /// Default `&[]` keeps existing implementations unaffected.
+    fn referenced_agent_ids(&self) -> &[String] {
+        &[]
+    }
+
+    /// Ids of workflows this agent depends on (e.g., via
+    /// [ADR-0052](../../../docs/adrs/0052-code-first-agent-dsl.md)
+    /// `workflow_as_tool`). Validated symmetrically with peer agents.
+    fn referenced_workflow_ids(&self) -> &[String] {
+        &[]
+    }
+
+    /// Ids of MCP servers this agent expects to be registered on the same
+    /// `OrkApp` (e.g., via
+    /// [ADR-0052](../../../docs/adrs/0052-code-first-agent-dsl.md)
+    /// `tool_server`). Validated against `OrkApp::mcp_servers`.
+    fn referenced_mcp_server_ids(&self) -> &[String] {
+        &[]
+    }
 }

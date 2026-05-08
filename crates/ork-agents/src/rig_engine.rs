@@ -162,6 +162,7 @@ pub(crate) struct OrkToolDyn {
     pub(crate) fatal: FatalSlot,
     pub(crate) semaphore: Arc<Semaphore>,
     pub(crate) max_tool_result_bytes: usize,
+    pub(crate) hooks: Vec<Arc<dyn crate::hooks::ToolHook>>,
 }
 
 impl ToolDyn for OrkToolDyn {
@@ -190,6 +191,7 @@ impl ToolDyn for OrkToolDyn {
         let semaphore = self.semaphore.clone();
         let fatal = self.fatal.clone();
         let max = self.max_tool_result_bytes;
+        let hooks = self.hooks.clone();
 
         Box::pin(async move {
             let call_name = tool.id().to_string();
@@ -213,6 +215,59 @@ impl ToolDyn for OrkToolDyn {
                 }
             };
 
+            // ADR-0052 §`Hooks` — `before` runs before semaphore acquisition so
+            // cheap policy checks short-circuit without contending for the tool slot.
+            let descriptor = ToolDescriptor {
+                name: tool.id().to_string(),
+                description: tool.description().to_string(),
+                parameters: tool.input_schema().clone(),
+            };
+            let mut effective_args = parsed.clone();
+            let mut overridden: Option<serde_json::Value> = None;
+            for hook in &hooks {
+                match hook.before(&ctx, &descriptor, &effective_args).await {
+                    crate::hooks::ToolHookAction::Proceed => {}
+                    crate::hooks::ToolHookAction::Override(v) => {
+                        overridden = Some(v);
+                        break;
+                    }
+                    crate::hooks::ToolHookAction::Cancel => {
+                        fatal.set("hook cancelled tool call".into());
+                        ctx.cancel.cancel();
+                        // Notify after-hooks of the cancelled invocation.
+                        let aborted: Result<serde_json::Value, OrkError> =
+                            Err(OrkError::Workflow("hook cancelled tool call".into()));
+                        for h in &hooks {
+                            h.after(&ctx, &descriptor, &aborted).await;
+                        }
+                        return Err(RigToolError::ToolCallError(Box::new(IoError::other(
+                            "hook cancelled tool call",
+                        ))));
+                    }
+                }
+                // No mutation surface yet — `effective_args` carries the unchanged
+                // value forward so subsequent hooks see the same input.
+                let _ = &mut effective_args;
+            }
+
+            // Override path: skip the actual invocation but still fire after-hooks
+            // with the synthetic result.
+            if let Some(value) = overridden {
+                let serialized = match serde_json::to_string(&value) {
+                    Ok(s) => s,
+                    Err(e) => return Err(RigToolError::JsonError(e)),
+                };
+                let result_for_after: Result<serde_json::Value, OrkError> = Ok(value);
+                for h in &hooks {
+                    h.after(&ctx, &descriptor, &result_for_after).await;
+                }
+                return Ok(if serialized.len() > max {
+                    truncate_tool_result(serialized, max).0
+                } else {
+                    serialized
+                });
+            }
+
             let _permit = semaphore.acquire_owned().await.map_err(|_| {
                 RigToolError::ToolCallError(Box::new(IoError::other("tool semaphore closed")))
             })?;
@@ -225,7 +280,11 @@ impl ToolDyn for OrkToolDyn {
                 ))));
             }
 
-            match tool.invoke(&ctx, &parsed).await {
+            let invocation = tool.invoke(&ctx, &parsed).await;
+            for h in &hooks {
+                h.after(&ctx, &descriptor, &invocation).await;
+            }
+            match invocation {
                 Ok(out) => match serde_json::to_string(&out) {
                     Ok(serialized) => {
                         if serialized.len() > max {
@@ -599,6 +658,21 @@ pub(crate) fn chat_message_to_rig(msg: ChatMessage) -> Result<RigMessage, OrkErr
 
 pub(crate) struct RigEngine;
 
+/// Per-call slot that the synthetic `submit` tool (ADR-0052 §`Structured output
+/// via rig::Extractor`) writes its parsed argument into. When set, the consumer
+/// substitutes the terminal text [`AgentMessage`] with a `Part::Data` carrying
+/// the captured value.
+pub(crate) type OutputSlot = Arc<std::sync::Mutex<Option<serde_json::Value>>>;
+
+/// Hook stack and per-call extras threaded into [`RigEngine::run`]. Empty by
+/// default, so `LocalAgent` keeps its current zero-hook behaviour.
+#[derive(Default, Clone)]
+pub(crate) struct RigEngineHooks {
+    pub(crate) tool: Vec<Arc<dyn crate::hooks::ToolHook>>,
+    pub(crate) completion: Vec<Arc<dyn crate::hooks::CompletionHook>>,
+    pub(crate) extractor_slot: Option<OutputSlot>,
+}
+
 impl RigEngine {
     pub(crate) async fn run(
         ctx: AgentContext,
@@ -607,6 +681,7 @@ impl RigEngine {
         tool_defs: Vec<Arc<dyn ToolDef>>,
         prompt: ChatMessage,
         history_seed: Vec<ChatMessage>,
+        hooks: RigEngineHooks,
     ) -> Result<AgentEventStream, OrkError> {
         if config.max_tool_iterations == 0 {
             let (tx, rx) = mpsc::channel::<Result<AgentEvent, OrkError>>(4);
@@ -649,6 +724,7 @@ impl RigEngine {
                 fatal: fatal.clone(),
                 semaphore: semaphore.clone(),
                 max_tool_result_bytes: config.max_tool_result_bytes,
+                hooks: hooks.tool.clone(),
             }));
         }
 
@@ -679,6 +755,9 @@ impl RigEngine {
 
         let (tx, rx) = mpsc::channel::<Result<AgentEvent, OrkError>>(128);
         let agent_id_line = config.id.clone();
+        let completion_hooks = hooks.completion.clone();
+        let extractor_slot = hooks.extractor_slot.clone();
+        let ctx_for_hooks = ctx.clone();
         tokio::spawn(run_rig_consumer(
             outer_stream,
             cancel,
@@ -688,6 +767,9 @@ impl RigEngine {
             context_id,
             expose,
             agent_id_line,
+            completion_hooks,
+            ctx_for_hooks,
+            extractor_slot,
         ));
 
         Ok(Box::pin(ReceiverStream::new(rx)))
@@ -704,6 +786,9 @@ async fn run_rig_consumer(
     context_id: Option<ork_a2a::ContextId>,
     expose_reasoning: bool,
     agent_id: String,
+    completion_hooks: Vec<Arc<dyn crate::hooks::CompletionHook>>,
+    ctx_for_hooks: AgentContext,
+    extractor_slot: Option<OutputSlot>,
 ) {
     loop {
         tokio::select! {
@@ -780,9 +865,24 @@ async fn run_rig_consumer(
                             "TODO(ADR-0022): agent tool loop telemetry",
                         );
                         let txt = fr.response().to_string();
+                        // ADR-0052 §`Hooks` — fire completion hooks before emitting the
+                        // terminal Message so post-run scoring/audit observes the same text.
+                        for h in &completion_hooks {
+                            h.on_completion(&ctx_for_hooks, &txt).await;
+                        }
+                        // ADR-0052 §`Structured output via rig::Extractor` — when a
+                        // synthetic `submit` tool was injected, prefer its captured
+                        // value over the LLM's free-form text.
+                        let parts = match extractor_slot
+                            .as_ref()
+                            .and_then(|s| s.lock().ok().and_then(|g| g.clone()))
+                        {
+                            Some(value) => vec![Part::Data { data: value, metadata: None }],
+                            None => vec![Part::Text { text: txt, metadata: None }],
+                        };
                         let msg = AgentMessage {
                             role: Role::Agent,
-                            parts: vec![Part::Text { text: txt, metadata: None }],
+                            parts,
                             message_id: MessageId::new(),
                             task_id: Some(task_id),
                             context_id,
