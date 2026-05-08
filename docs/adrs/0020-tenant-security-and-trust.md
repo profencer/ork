@@ -1,9 +1,21 @@
 # 0020 — Tenant security and A2A trust model
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-04-24
 - **Phase:** 4
 - **Relates to:** 0004, 0005, 0007, 0008, 0009, 0010, 0014, 0021
+
+**Implementation note (2026-05-08):** Phases A (RLS + enriched JWT
++ tenant CRUD scope gating), B (mesh JWT signer + cross-mesh
+delegation propagation), C1 (KmsClient trait + per-tenant envelope
+encryption — legacy adapter only), and D (Kafka security defaults +
+Kong-headers warning) shipped under this ADR. Cloud-KMS adapters
+(AWS / GCP / Azure / Vault), the `ork-push` consolidation through
+`KmsClient::derive_kek_compat`, the `ork admin token mint` /
+`ork admin keys rotate` CLI subcommands, the `a2a_signing_keys`
+table envelope migration, and the deferred card-signing JWS path
+are explicitly out of scope and are left as follow-up ADRs (see
+the C1 entry under §`Reviewer findings`).
 
 ## Context
 

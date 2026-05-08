@@ -123,7 +123,7 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0017](0017-webui-chat-client.md) | Web UI / chat client gateway | Accepted | 2 |
 | [0018](0018-dag-executor-enhancements.md) | Workflow DAG executor enhancements | Superseded by [0050](0050-code-first-workflow-dsl.md) | – |
 | [0019](0019-scheduled-tasks.md) | Scheduled tasks | Proposed | 3 |
-| [0020](0020-tenant-security-and-trust.md) | Tenant security and A2A trust model | Proposed | 3 |
+| [0020](0020-tenant-security-and-trust.md) | Tenant security and A2A trust model | Implemented | 3 |
 | [0021](0021-rbac-scopes.md) | RBAC scopes for agents, tools, artifacts | Proposed | 3 |
 | [0022](0022-observability.md) | Observability: tracing, monitors, task event log | Superseded by [0048](0048-pivot-to-code-first-rig-platform.md) | – |
 | [0023](0023-migration-and-rollout-plan.md) | Migration and rollout plan | Proposed | 3 |
