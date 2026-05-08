@@ -174,3 +174,38 @@ async fn missing_authorization_header_returns_401() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// ADR-0020 §`Edge trust`: when `ORK__ENV=production` is set but the request
+/// lacks `X-Client-Cert-Subject` (Kong's marker), the middleware logs a
+/// warning *and continues*. The request still flows through. We verify the
+/// continue half here only — the once-per-process `tracing::warn!` itself
+/// is best asserted via a `tracing-subscriber` capture in a dedicated test
+/// (deferred; the `OnceLock` makes it order-sensitive across tests sharing
+/// the same process).
+#[tokio::test]
+async fn production_without_kong_headers_still_serves_traffic() {
+    // SAFETY: tests run sequentially when sharing process-wide env; this var
+    // name is unique to this assertion and we restore default at the end.
+    unsafe {
+        std::env::set_var("ORK__ENV", "production");
+    }
+    let app = echo_app();
+    let tenant = Uuid::now_v7();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/x")
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", token(tenant, "alice", &["a2a:send"])),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    unsafe {
+        std::env::remove_var("ORK__ENV");
+    }
+}

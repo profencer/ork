@@ -18,7 +18,10 @@ tracing = { workspace = true }
 futures = { workspace = true }
 bytes = { workspace = true }
 rskafka = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]
 url = { workspace = true }
+tempfile = { workspace = true }

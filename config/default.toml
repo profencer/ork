@@ -48,14 +48,40 @@ providers = []
 cache_dir = "~/.ork/workspaces"
 clone_depth = 1
 
-# Hybrid Kong/Kafka transport (ADR-0004).
+# Hybrid Kong/Kafka transport (ADR-0004) + ADR-0020 §`Kafka trust`.
 # Empty `brokers` selects the in-memory backend (no Kafka required for dev).
 # Provide a comma-separated list via ORK__KAFKA__BROKERS to talk to a real cluster.
+#
+# Default transport is `plaintext`, which is allowed only when
+# ORK__ENV=dev. Outside dev, RsKafkaBackend::connect hard-errors at boot
+# unless `[kafka.transport]` is set to `tls`.
 [kafka]
 brokers = []
 namespace = "ork.a2a.v1"
-# security_protocol = "SASL_SSL"
-# sasl_mechanism = "OAUTHBEARER"
+
+# ADR-0020: TLS to brokers (production posture).
+# `ca_path` is REQUIRED — when omitted, no roots are loaded and the broker
+# handshake fails with "unknown issuer". System / Mozilla roots are
+# intentionally not bundled so the trust posture is explicit.
+# [kafka.transport]
+# kind = "tls"
+# ca_path = "/etc/ork/kafka-ca.pem"                # or /etc/ssl/certs/ca-certificates.crt for public PKI
+# client_cert_path = "/etc/ork/kafka-client.pem"   # optional mTLS (cert + key both required)
+# client_key_path = "/etc/ork/kafka-client.key"
+
+# ADR-0020: SASL/OAUTHBEARER (DevPortal-issued tokens).
+# [kafka.auth]
+# kind = "oauthbearer"
+# token_env = "ORK_KAFKA_TOKEN"
+
+# ADR-0020: SASL/SCRAM (fallback).
+# `mechanism` accepts the canonical `"sha-512"` / `"sha-256"`; the legacy
+# `"scram-sha-512"` / `"SHA-512"` spellings parse as aliases.
+# [kafka.auth]
+# kind = "scram"
+# username = "ork-svc"
+# password_env = "ORK_KAFKA_PASSWORD"
+# mechanism = "sha-512"  # or "sha-256"
 
 # Remote A2A agents loaded at boot (ADR-0007). Each entry is fetched, cached
 # (Redis), and registered as a long-lived Agent. The `auth` block selects one of

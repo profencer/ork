@@ -3,13 +3,28 @@
 
 use std::sync::Arc;
 
-use ork_common::config::KafkaConfig;
+use ork_common::config::{KafkaAuth, KafkaConfig, KafkaTransport};
 
 use crate::consumer::Consumer;
 use crate::error::EventingError;
 use crate::in_memory::InMemoryBackend;
 use crate::producer::Producer;
 use crate::rskafka_backend::RsKafkaBackend;
+
+fn transport_kind(t: &KafkaTransport) -> &'static str {
+    match t {
+        KafkaTransport::Plaintext => "plaintext",
+        KafkaTransport::Tls { .. } => "tls",
+    }
+}
+
+fn auth_kind(a: &KafkaAuth) -> &'static str {
+    match a {
+        KafkaAuth::None => "none",
+        KafkaAuth::Scram { .. } => "scram",
+        KafkaAuth::Oauthbearer { .. } => "oauthbearer",
+    }
+}
 
 /// A pair of producer + consumer handles, both backed by the same backend instance so
 /// in-process round-trips work without cross-backend state.
@@ -38,7 +53,13 @@ impl EventingClient {
 ///
 /// - `cfg.brokers.is_empty()` → [`InMemoryBackend`] (logs at INFO so dev mode is obvious).
 /// - otherwise → [`RsKafkaBackend`].
-pub async fn build_client(cfg: &KafkaConfig) -> Result<EventingClient, EventingError> {
+///
+/// `env` is the runtime deployment selector
+/// ([`ork_common::config::AppConfig::env`]) — see ADR-0020 §`Kafka trust`,
+/// where `RsKafkaBackend::connect` enforces that `PLAINTEXT` only ships
+/// in `"dev"`. The in-memory branch is unconditionally allowed because no
+/// network is involved.
+pub async fn build_client(cfg: &KafkaConfig, env: &str) -> Result<EventingClient, EventingError> {
     if cfg.brokers.is_empty() {
         tracing::info!(
             namespace = %cfg.namespace,
@@ -50,9 +71,11 @@ pub async fn build_client(cfg: &KafkaConfig) -> Result<EventingClient, EventingE
     tracing::info!(
         brokers = ?cfg.brokers,
         namespace = %cfg.namespace,
+        transport = transport_kind(&cfg.transport),
+        auth = auth_kind(&cfg.auth),
         "connecting to Kafka via rskafka backend"
     );
-    let backend = Arc::new(RsKafkaBackend::connect(cfg.brokers.clone()).await?);
+    let backend = Arc::new(RsKafkaBackend::connect(cfg, env).await?);
     Ok(EventingClient {
         producer: backend.clone(),
         consumer: backend,
@@ -72,7 +95,7 @@ mod tests {
     #[tokio::test]
     async fn empty_brokers_yields_in_memory_roundtrip() {
         let cfg = KafkaConfig::default();
-        let client = build_client(&cfg).await.expect("build");
+        let client = build_client(&cfg, "dev").await.expect("build");
 
         let mut stream = client.consumer.subscribe("smoke").await.expect("subscribe");
         client

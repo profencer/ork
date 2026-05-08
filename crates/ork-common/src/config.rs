@@ -388,11 +388,16 @@ fn default_repo_branch() -> String {
     "main".into()
 }
 
-/// Kafka client configuration (ADR-0004 hybrid transport).
+/// Kafka client configuration (ADR-0004 hybrid transport, ADR-0020 §`Kafka trust`).
 ///
 /// An empty `brokers` list is the dev-mode default and tells [`ork_eventing::build_client`]
 /// to use the in-memory broadcast backend instead of attempting a real connection.
-#[derive(Debug, Deserialize, Clone)]
+///
+/// `transport` and `auth` carry the ADR-0020 security posture. The pre-ADR fields
+/// `security_protocol` / `sasl_mechanism` are accepted for backwards-compat
+/// deserialisation but no longer drive runtime behaviour — operators get a
+/// log line at boot pointing them at the new keys.
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct KafkaConfig {
     /// Bootstrap brokers (`host:port`). Empty = use in-memory backend (dev / tests).
     #[serde(default)]
@@ -402,14 +407,88 @@ pub struct KafkaConfig {
     #[serde(default = "default_kafka_namespace")]
     pub namespace: String,
 
-    /// Optional security protocol (`PLAINTEXT`, `SASL_SSL`, etc.). Phase-1 honours only the
-    /// presence of a value; full SASL/TLS wiring lands with ADR-0020.
+    /// ADR-0020 §`Kafka trust`: transport-layer posture. Defaults to
+    /// `Plaintext`. `RsKafkaBackend::connect` hard-errors when the runtime
+    /// `env` is not `dev` and this resolves to `Plaintext`.
+    #[serde(default)]
+    pub transport: KafkaTransport,
+
+    /// ADR-0020 §`Kafka trust`: SASL auth posture. Defaults to `None`
+    /// (no SASL). `Oauthbearer` is the production target;
+    /// `Scram` is the documented fallback.
+    #[serde(default)]
+    pub auth: KafkaAuth,
+
+    /// Pre-ADR-0020 free-form security protocol (`PLAINTEXT`, `SASL_SSL`, ...).
+    /// Accepted for backward-compat deserialisation only; runtime behaviour is
+    /// driven by [`Self::transport`] + [`Self::auth`] now.
     #[serde(default)]
     pub security_protocol: Option<String>,
 
-    /// Optional SASL mechanism (`OAUTHBEARER`, `SCRAM-SHA-512`, ...). Reserved for ADR-0020.
+    /// Pre-ADR-0020 free-form SASL mechanism (`OAUTHBEARER`, `SCRAM-SHA-512`, ...).
+    /// Accepted for backward-compat deserialisation only; runtime behaviour is
+    /// driven by [`Self::auth`] now.
     #[serde(default)]
     pub sasl_mechanism: Option<String>,
+}
+
+/// ADR-0020 §`Kafka trust`: transport-layer posture for `RsKafkaBackend`.
+///
+/// `Plaintext` is allowed only when `ORK__ENV=dev`; `RsKafkaBackend::connect`
+/// returns a [`crate::config`]-shaped error otherwise.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum KafkaTransport {
+    #[default]
+    Plaintext,
+    /// TLS via `rustls`.
+    ///
+    /// - `ca_path` (optional): PEM bundle of trusted CA certs. **If unset,
+    ///   no roots are loaded** and the broker handshake will fail with
+    ///   "unknown issuer" — system / Mozilla roots are intentionally not
+    ///   loaded so production posture is explicit. Operators wanting public
+    ///   PKI must point this at a system bundle (e.g. `/etc/ssl/certs/ca-certificates.crt`).
+    /// - `client_cert_path` + `client_key_path` (optional, both-or-neither):
+    ///   PEM client cert + key for mTLS to the brokers.
+    Tls {
+        #[serde(default)]
+        ca_path: Option<PathBuf>,
+        #[serde(default)]
+        client_cert_path: Option<PathBuf>,
+        #[serde(default)]
+        client_key_path: Option<PathBuf>,
+    },
+}
+
+/// ADR-0020 §`Kafka trust`: SASL auth posture for `RsKafkaBackend`. Maps
+/// 1:1 onto `rskafka::client::SaslConfig`. `*_env` fields name environment
+/// variables that hold credentials; the literal value never lives in the
+/// toml file (mirrors `[[remote_agents]]` auth shape).
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KafkaAuth {
+    #[default]
+    None,
+    /// SASL/SCRAM. `mechanism` selects SHA-256 vs SHA-512.
+    Scram {
+        username: String,
+        password_env: String,
+        #[serde(default)]
+        mechanism: ScramMechanism,
+    },
+    /// SASL/OAUTHBEARER. The bearer token is read from `token_env` at
+    /// connect time; rotation is the operator's responsibility today.
+    Oauthbearer { token_env: String },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScramMechanism {
+    #[serde(rename = "sha-256", alias = "scram-sha-256", alias = "SHA-256")]
+    Sha256,
+    #[default]
+    #[serde(rename = "sha-512", alias = "scram-sha-512", alias = "SHA-512")]
+    Sha512,
 }
 
 fn default_kafka_namespace() -> String {
@@ -421,6 +500,8 @@ impl Default for KafkaConfig {
         Self {
             brokers: Vec::new(),
             namespace: default_kafka_namespace(),
+            transport: KafkaTransport::default(),
+            auth: KafkaAuth::default(),
             security_protocol: None,
             sasl_mechanism: None,
         }
@@ -817,8 +898,105 @@ mod tests {
         let cfg = KafkaConfig::default();
         assert!(cfg.brokers.is_empty());
         assert_eq!(cfg.namespace, "ork.a2a.v1");
+        assert!(matches!(cfg.transport, KafkaTransport::Plaintext));
+        assert!(matches!(cfg.auth, KafkaAuth::None));
         assert!(cfg.security_protocol.is_none());
         assert!(cfg.sasl_mechanism.is_none());
+    }
+
+    /// ADR-0020 §`Kafka trust`: TLS section parses with all paths optional.
+    #[test]
+    fn kafka_transport_tls_section_parses() {
+        let toml_src = r#"
+            [kafka]
+            brokers = ["broker1:9093"]
+            [kafka.transport]
+            kind = "tls"
+            ca_path = "/etc/ork/ca.pem"
+        "#;
+        let parsed: KafkaSectionWrapper = toml::from_str(toml_src).expect("parse");
+        match parsed.kafka.transport {
+            KafkaTransport::Tls {
+                ca_path,
+                client_cert_path,
+                client_key_path,
+            } => {
+                assert_eq!(
+                    ca_path.as_deref(),
+                    Some(std::path::Path::new("/etc/ork/ca.pem"))
+                );
+                assert!(client_cert_path.is_none());
+                assert!(client_key_path.is_none());
+            }
+            other => panic!("expected tls, got {other:?}"),
+        }
+    }
+
+    /// ADR-0020 §`Kafka trust`: OAUTHBEARER auth section.
+    #[test]
+    fn kafka_auth_oauthbearer_parses() {
+        let toml_src = r#"
+            [kafka]
+            brokers = ["broker:9093"]
+            [kafka.auth]
+            kind = "oauthbearer"
+            token_env = "ORK_KAFKA_TOKEN"
+        "#;
+        let parsed: KafkaSectionWrapper = toml::from_str(toml_src).expect("parse");
+        match parsed.kafka.auth {
+            KafkaAuth::Oauthbearer { token_env } => assert_eq!(token_env, "ORK_KAFKA_TOKEN"),
+            other => panic!("expected oauthbearer, got {other:?}"),
+        }
+    }
+
+    /// ADR-0020 §`Kafka trust`: SCRAM with default mechanism (SHA-512).
+    #[test]
+    fn kafka_auth_scram_defaults_to_sha512() {
+        let toml_src = r#"
+            [kafka]
+            brokers = ["broker:9093"]
+            [kafka.auth]
+            kind = "scram"
+            username = "ork-svc"
+            password_env = "ORK_KAFKA_PASSWORD"
+        "#;
+        let parsed: KafkaSectionWrapper = toml::from_str(toml_src).expect("parse");
+        match parsed.kafka.auth {
+            KafkaAuth::Scram {
+                username,
+                password_env,
+                mechanism,
+            } => {
+                assert_eq!(username, "ork-svc");
+                assert_eq!(password_env, "ORK_KAFKA_PASSWORD");
+                assert_eq!(mechanism, ScramMechanism::Sha512);
+            }
+            other => panic!("expected scram, got {other:?}"),
+        }
+    }
+
+    /// Pre-ADR-0020 free-form `security_protocol` / `sasl_mechanism` keep
+    /// parsing so an upgrade does not break a config file mid-flight; they
+    /// just no longer drive runtime behaviour. The new structured
+    /// `transport` / `auth` fields stay at their defaults so a refactor
+    /// that re-introduced runtime coupling between the two would surface
+    /// here.
+    #[test]
+    fn kafka_section_legacy_protocol_keys_still_parse() {
+        let toml_src = r#"
+            [kafka]
+            brokers = ["broker:9093"]
+            security_protocol = "SASL_SSL"
+            sasl_mechanism = "SCRAM-SHA-512"
+        "#;
+        let parsed: KafkaSectionWrapper = toml::from_str(toml_src).expect("parse");
+        assert_eq!(parsed.kafka.security_protocol.as_deref(), Some("SASL_SSL"));
+        assert_eq!(
+            parsed.kafka.sasl_mechanism.as_deref(),
+            Some("SCRAM-SHA-512")
+        );
+        assert!(matches!(parsed.kafka.transport, KafkaTransport::Plaintext));
+        assert!(matches!(parsed.kafka.auth, KafkaAuth::None));
     }
 
     /// ADR-0020 §`Secrets handling`: an unconfigured `[security.kms]`

@@ -3366,8 +3366,11 @@ dependencies = [
  "ork-common",
  "ork-core",
  "rskafka",
+ "rustls 0.23.38",
+ "rustls-pemfile",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -4574,8 +4577,10 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "rsasl",
+ "rustls 0.23.38",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tracing",
 ]
 

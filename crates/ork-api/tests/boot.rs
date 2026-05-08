@@ -22,7 +22,7 @@ async fn build_client_from_default_config_round_trips() {
         "default config should select the in-memory backend"
     );
 
-    let client = ork_eventing::build_client(&config.kafka)
+    let client = ork_eventing::build_client(&config.kafka, &config.env)
         .await
         .expect("build_client");
 

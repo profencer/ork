@@ -121,7 +121,9 @@ cron = "0.15"
 evalexpr = "11.3"
 
 # Eventing / Kafka (pure-Rust client per ADR 0004)
-rskafka = { version = "0.6", default-features = false }
+rskafka = { version = "0.6", default-features = false, features = ["transport-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
 bytes = "1"
 
 # ADR-0016 artifact storage (S3 + MinIO)

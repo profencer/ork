@@ -11,6 +11,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use ork_common::config::KafkaConfig;
 use ork_eventing::{Consumer, Producer, RsKafkaBackend};
 use tokio::time::timeout;
 
@@ -21,7 +22,12 @@ async fn rskafka_publish_subscribe_roundtrip() {
         std::env::var("RSKAFKA_BROKERS").expect("set RSKAFKA_BROKERS=host:port to run this test");
     let brokers: Vec<String> = brokers_env.split(',').map(str::to_owned).collect();
 
-    let backend = RsKafkaBackend::connect(brokers)
+    let cfg = KafkaConfig {
+        brokers,
+        ..KafkaConfig::default()
+    };
+    // Live test connects under `dev` semantics so PLAINTEXT is allowed.
+    let backend = RsKafkaBackend::connect(&cfg, "dev")
         .await
         .expect("connect to broker");
 

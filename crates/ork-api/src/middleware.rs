@@ -14,7 +14,7 @@
 //! required (it authenticates the mesh peer); the mesh token attests to
 //! the originator's identity at the moment the call was issued.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::{
     Json,
@@ -31,7 +31,42 @@ use uuid::Uuid;
 
 pub use ork_common::auth::AuthContext;
 
+/// ADR-0020 §`Edge trust`: Kong terminates TLS and stamps client-cert metadata
+/// onto upstream requests. When `env == "production"` but the request
+/// arrived without these headers, ork-api is almost certainly being reached
+/// directly (Kong bypass). We log this exactly once per process so the
+/// signal is visible without burying healthy traffic logs.
+const KONG_CERT_SUBJECT_HEADER: &str = "X-Client-Cert-Subject";
+
+static KONG_HEADERS_WARNING: OnceLock<()> = OnceLock::new();
+
+/// Carries the resolved `AppConfig::env` selector into request extensions so
+/// `auth_middleware` reads the same value that the rest of the runtime sees,
+/// rather than re-reading `ORK__ENV` directly (which misses TOML-only
+/// deployments). Inserted by `crate::routes::create_router_with_gateways`.
+#[derive(Debug, Clone)]
+pub struct RuntimeEnv(pub String);
+
 pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
+    // ADR-0020 §`Edge trust`: warn once per process when production traffic
+    // bypasses Kong (`X-Client-Cert-Subject` absent). Cheap & local — does
+    // not block the request. Prefer the `RuntimeEnv` extension (canonical
+    // `state.config.env` resolved at boot from TOML + env vars); fall back
+    // to `std::env::var("ORK__ENV")` so unit-test apps that don't carry
+    // `AppState` still trigger the warning when explicitly testing it.
+    let env_value = req
+        .extensions()
+        .get::<RuntimeEnv>()
+        .map(|e| e.0.clone())
+        .unwrap_or_else(|| std::env::var("ORK__ENV").unwrap_or_default());
+    if env_value == "production" && !req.headers().contains_key(KONG_CERT_SUBJECT_HEADER) {
+        KONG_HEADERS_WARNING.get_or_init(|| {
+            tracing::warn!(
+                "ADR-0020 §`Edge trust`: env=production but no Kong-style headers ({KONG_CERT_SUBJECT_HEADER}) on request — ork-api may be receiving direct, un-fronted traffic"
+            );
+        });
+    }
+
     let jwt_secret =
         std::env::var("ORK__AUTH__JWT_SECRET").unwrap_or_else(|_| "change-me-in-production".into());
 

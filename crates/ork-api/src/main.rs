@@ -163,9 +163,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the eventing client up-front so the ADR-0006 fire-and-forget delegation
     // publisher can share the same producer the discovery loop uses below.
-    let eventing = ork_eventing::build_client(&config.kafka)
+    let eventing = ork_eventing::build_client(&config.kafka, &config.env)
         .await
-        .context("failed to initialise eventing client (ADR-0004)")?;
+        .context("failed to initialise eventing client (ADR-0004 / ADR-0020)")?;
 
     let delegation_publisher: Arc<dyn ork_core::ports::delegation_publisher::DelegationPublisher> =
         Arc::new(ork_eventing::KafkaDelegationPublisher::new(

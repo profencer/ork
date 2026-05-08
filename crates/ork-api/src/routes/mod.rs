@@ -13,7 +13,7 @@ use ork_security::MeshTokenSigner;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::middleware::auth_middleware;
+use crate::middleware::{RuntimeEnv, auth_middleware};
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
@@ -30,6 +30,13 @@ pub fn create_router_with_gateways(
     gateway_protected: Router,
     mesh_signer: Option<Arc<dyn MeshTokenSigner>>,
 ) -> Router {
+    // ADR-0020 §`Edge trust`: the runtime env selector (canonical source is
+    // `state.config.env`, populated from TOML + `ORK__ENV` env var) drives
+    // the once-per-process Kong-headers warning in `auth_middleware`. Carry
+    // it via a request extension so the middleware doesn't have to re-read
+    // `std::env::var` (which misses the case where `env` is set in the TOML
+    // file but the env var is not exported to the process).
+    let runtime_env = RuntimeEnv(state.config.env.clone());
     let public_routes = Router::new()
         .merge(health::routes())
         .merge(webhooks::routes(state.clone()))
@@ -47,7 +54,8 @@ pub fn create_router_with_gateways(
         // ADR-0008: A2A JSON-RPC dispatcher, SSE bridge, and convenience
         // endpoints all live behind the same auth middleware.
         .merge(a2a::protected_routes(state.clone()))
-        .layer(middleware::from_fn(auth_middleware));
+        .layer(middleware::from_fn(auth_middleware))
+        .layer(Extension(runtime_env));
     // ADR-0020 §`Mesh trust`: hand the signer to `auth_middleware` via a
     // request extension. Layered AFTER `from_fn(auth_middleware)` so the
     // extension is present when the middleware runs (axum applies layers
