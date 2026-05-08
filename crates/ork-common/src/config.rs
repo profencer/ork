@@ -52,6 +52,44 @@ pub struct AppConfig {
     /// ADR-0016: scheduled artifact retention (Postgres + blob delete).
     #[serde(default)]
     pub retention: RetentionConfig,
+    /// ADR-0020 §`Secrets handling`: KMS provider selection for tenant
+    /// envelope encryption. Defaults to the legacy adapter (KEK derived
+    /// from `auth.jwt_secret`) so existing deployments keep working
+    /// without configuration changes.
+    #[serde(default)]
+    pub security: SecurityConfig,
+}
+
+/// ADR-0020 §`Secrets handling`. Cloud-KMS adapters (AWS / GCP / Azure /
+/// Vault) are deferred to follow-up ADRs per the user decision recorded
+/// in `docs/adrs/0020-tenant-security-and-trust.md`. The shape is
+/// intentionally extensible — new providers attach at the [`KmsConfig`]
+/// enum level.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub kms: KmsConfig,
+}
+
+/// One-of provider selection. Today only `legacy` is implemented;
+/// `aws`/`gcp`/`azure`/`vault` are reserved variants so config files can
+/// reference them without breaking deserialisation when the adapters
+/// land in a follow-up ADR.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(tag = "provider", rename_all = "lowercase")]
+pub enum KmsConfig {
+    /// HKDF-derived KEK from `auth.jwt_secret`. Default; preserves the
+    /// pre-ADR-0020 envelope behaviour for `ork_push::encryption`.
+    #[default]
+    Legacy,
+    /// AWS KMS (`aws-sdk-kms`). Adapter is a follow-up ADR.
+    Aws { key_arn: String },
+    /// Vault Transit. Adapter is a follow-up ADR.
+    Vault { addr: String, key_name: String },
+    /// GCP KMS. Adapter is a follow-up ADR.
+    Gcp { key_resource_name: String },
+    /// Azure Key Vault. Adapter is a follow-up ADR.
+    Azure { vault_url: String, key_name: String },
 }
 
 /// One `[[gateways]]` static entry (ADR-0013). Adapter-specific options live in `config` JSON.
@@ -480,6 +518,7 @@ impl Default for AppConfig {
             gateways: Vec::new(),
             artifacts: ArtifactsConfig::default(),
             retention: RetentionConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -780,6 +819,17 @@ mod tests {
         assert_eq!(cfg.namespace, "ork.a2a.v1");
         assert!(cfg.security_protocol.is_none());
         assert!(cfg.sasl_mechanism.is_none());
+    }
+
+    /// ADR-0020 §`Secrets handling`: an unconfigured `[security.kms]`
+    /// must default to the legacy adapter so existing dev deployments
+    /// keep booting without configuration changes. Pinned to catch a
+    /// future refactor that adds a new variant and forgets the
+    /// `#[default]` attribute placement.
+    #[test]
+    fn kms_config_defaults_to_legacy() {
+        assert!(matches!(SecurityConfig::default().kms, KmsConfig::Legacy));
+        assert!(matches!(KmsConfig::default(), KmsConfig::Legacy));
     }
 
     #[test]

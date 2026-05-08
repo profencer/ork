@@ -7,6 +7,7 @@ edition.workspace = true
 ork-a2a = { workspace = true }
 ork-common = { workspace = true }
 ork-core = { workspace = true }
+ork-security = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
 serde = { workspace = true }
@@ -19,3 +20,6 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+secrecy = { workspace = true }

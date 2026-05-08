@@ -30,8 +30,34 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to database")?;
 
-    let tenant_repo =
-        Arc::new(ork_persistence::postgres::tenant_repo::PgTenantRepository::new(pool.clone()));
+    // ADR-0020 §`Secrets handling`: build the KMS-backed
+    // `TenantSecretsCipher` for at-rest envelope encryption of
+    // `*_encrypted` fields on `tenants`. Cloud adapters
+    // (AWS / GCP / Azure / Vault) are deferred to follow-up ADRs.
+    // Hard-error on reserved variants rather than silently downgrading
+    // to the legacy KEK: a config that mentions a real cloud KMS ARN
+    // and quietly encrypts everything under the JWT-secret KEK is the
+    // worst possible failure mode (looks fine, isn't).
+    let kms_client: Arc<dyn ork_security::KmsClient> = match &config.security.kms {
+        ork_common::config::KmsConfig::Legacy => Arc::new(ork_security::JwtSecretKekKms::new(
+            secrecy::SecretString::from(config.auth.jwt_secret.clone()),
+        )),
+        other => {
+            anyhow::bail!(
+                "ADR-0020: KMS provider {:?} is reserved for Phase C2-C5 and not yet \
+                 implemented. Remove the [security.kms] block (or set provider = \
+                 \"legacy\") to use the JWT-secret-derived KEK in dev. Cloud-KMS \
+                 adapters land in a follow-up ADR.",
+                other
+            );
+        }
+    };
+    let tenant_secrets_cipher =
+        Arc::new(ork_security::TenantSecretsCipher::new(kms_client.clone()));
+    let tenant_repo = Arc::new(
+        ork_persistence::postgres::tenant_repo::PgTenantRepository::new(pool.clone())
+            .with_cipher(tenant_secrets_cipher.clone()),
+    );
     let workflow_repo =
         Arc::new(ork_persistence::postgres::workflow_repo::PgWorkflowRepository::new(pool.clone()));
     let a2a_task_repo: Arc<dyn ork_core::ports::a2a_task_repo::A2aTaskRepository> =
