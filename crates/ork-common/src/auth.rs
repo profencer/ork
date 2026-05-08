@@ -91,23 +91,91 @@ pub const TENANT_SELF_SCOPE: &str = "tenant:self";
 pub const IMPERSONATION_HEADER: &str = "X-Tenant-Id";
 
 /// Build the scope string that authorises invoking `agent_id` (ADR-0020 §2;
-/// formal vocabulary in the eventual ADR-0021).
+/// formal vocabulary in ADR-0021).
 #[must_use]
 pub fn agent_invoke_scope(agent_id: &str) -> String {
     format!("agent:{agent_id}:invoke")
 }
 
-/// Build the scope string that authorises delegating to `agent_id`.
+/// Build the scope string that authorises delegating to `agent_id` (ADR-0021).
 #[must_use]
 pub fn agent_delegate_scope(agent_id: &str) -> String {
     format!("agent:{agent_id}:delegate")
 }
 
-/// Build the scope string that authorises invoking the tool `tool_id`.
+/// Build the scope string that authorises cancelling a task running on
+/// `agent_id` (ADR-0021 §`Vocabulary`).
+#[must_use]
+pub fn agent_cancel_scope(agent_id: &str) -> String {
+    format!("agent:{agent_id}:cancel")
+}
+
+/// Build the scope string that authorises invoking a built-in or
+/// integration tool by name (ADR-0021 §`Vocabulary`). For MCP tools
+/// reach for [`tool_mcp_invoke_scope`] instead so the MCP server origin
+/// is preserved in the scope shape.
 #[must_use]
 pub fn tool_invoke_scope(tool_id: &str) -> String {
     format!("tool:{tool_id}:invoke")
 }
+
+/// Build the scope string that authorises invoking a specific MCP tool
+/// (ADR-0021 §`Vocabulary` row `tool:mcp:<server>.<name>:invoke`). MCP
+/// tools land in the catalog as `mcp:<server>.<name>`; the matching
+/// scope keeps the server prefix so an operator can grant
+/// `tool:mcp:atlassian.*:invoke` without granting other servers.
+#[must_use]
+pub fn tool_mcp_invoke_scope(server: &str, name: &str) -> String {
+    format!("tool:mcp:{server}.{name}:invoke")
+}
+
+/// Build the scope string that authorises an artifact action (ADR-0021
+/// §`Vocabulary`). `scope` is `tenant` or `context-<id>`; `action` is
+/// one of `read | write | delete`.
+#[must_use]
+pub fn artifact_scope(scope: &str, action: &str) -> String {
+    format!("artifact:{scope}:{action}")
+}
+
+/// Build the scope string that authorises invoking a specific LLM model
+/// (ADR-0021 §`Vocabulary`). Only enforced when
+/// `[security.enforce_model_scopes] = true`.
+#[must_use]
+pub fn model_invoke_scope(provider: &str, model: &str) -> String {
+    format!("model:{provider}:{model}:invoke")
+}
+
+/// Build the scope string that authorises sourcing events from a
+/// gateway (ADR-0021 §`Vocabulary`).
+#[must_use]
+pub fn gateway_invoke_scope(gateway_id: &str) -> String {
+    format!("gateway:{gateway_id}:invoke")
+}
+
+/// ADR-0021 §`Decision points` (cross-tenant): cross-tenant delegation
+/// requires `agent:<target>:delegate` AND this scope. Carrying it on a
+/// regular tenant token is a flagged event in the audit stream.
+pub const TENANT_CROSS_DELEGATE_SCOPE: &str = "tenant:cross_delegate";
+
+/// ADR-0021 §`Vocabulary`: operator-only root admin sentinel. Reserved;
+/// not the same as the `*` wildcard (which `ScopeChecker::validate_format`
+/// rejects).
+pub const TENANT_ROOT_SCOPE: &str = "tenant:root";
+
+/// ADR-0021 §`Vocabulary`: required for [`crate::auth`]-protected Web UI
+/// gateway routes (ADR-0017).
+pub const WEBUI_ACCESS_SCOPE: &str = "webui:access";
+
+/// ADR-0021 §`Vocabulary`: required for non-spec admin views such as
+/// `GET /a2a/agents/{id}/tasks` and `GET /a2a/tasks/{task_id}`.
+pub const OPS_READ_SCOPE: &str = "ops:read";
+
+/// ADR-0021 §`Vocabulary`: schedule CRUD (read).
+pub const SCHEDULE_READ_SCOPE: &str = "schedule:read";
+
+/// ADR-0021 §`Vocabulary`: schedule CRUD (write). Wired into the
+/// `routes/schedules.rs` HTTP surface when ADR-0019 lands.
+pub const SCHEDULE_WRITE_SCOPE: &str = "schedule:write";
 
 /// ADR-0020 §`Mesh trust — JWT claims and propagation`: the trust tier the
 /// caller's token carries. Drives cross-tier audit boundaries; finer-grained

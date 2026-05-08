@@ -163,13 +163,13 @@ fn root_ctx(tenant: TenantId) -> AgentContext {
         caller: CallerIdentity {
             tenant_id: tenant,
             user_id: None,
-            // ADR-0020 §`Tenant id propagation across delegation`: the
-            // policy gate in `execute_one_shot_delegation` requires
-            // `agent:<target>:delegate`. Tests don't exercise the gate
-            // itself (separate suite); grant the wildcard so the existing
-            // assertions still measure the SUT (delegation outcome shape,
-            // publisher routing).
-            scopes: vec!["agent:*:delegate".to_string()],
+            // ADR-0020 + ADR-0021 policy gates: `agent_call` requires
+            // `agent:<target>:delegate`, the composite tool plane requires
+            // `tool:<name>:invoke` for the `peer_*` arm. Tests don't
+            // exercise the gates themselves (separate suite); grant the
+            // wildcards so the existing assertions still measure the SUT
+            // (delegation outcome shape, publisher routing).
+            scopes: vec!["agent:*:delegate".to_string(), "tool:*:invoke".to_string()],
             tenant_chain: vec![tenant],
             ..CallerIdentity::default()
         },
@@ -466,4 +466,139 @@ async fn composite_peer_tool_without_agent_call_returns_explicit_error() {
         }
         other => panic!("expected Integration error, got {other:?}"),
     }
+}
+
+// =============================================================================
+// ADR-0021 §`Decision points` step 2 — `agent:<target>:delegate` gate +
+// `tenant:cross_delegate` for remote agents.
+// =============================================================================
+
+/// `agent_call` denies the call when the caller does not carry
+/// `agent:<target>:delegate`. Pinned so a future refactor cannot silently
+/// drop the gate.
+#[tokio::test]
+async fn agent_call_denied_without_delegate_scope() {
+    let tenant = TenantId::new();
+    let (_registry, exec) = build_pair(None);
+
+    // Strip the wildcard delegate scope set by `root_ctx`.
+    let mut ctx = root_ctx(tenant);
+    ctx.caller.scopes = vec!["tool:*:invoke".into()];
+
+    let err = exec
+        .execute(
+            &ctx,
+            "agent_call",
+            &serde_json::json!({"agent": "echo", "prompt": "hi"}),
+        )
+        .await
+        .unwrap_err();
+
+    match err {
+        OrkError::Forbidden(msg) => {
+            assert!(
+                msg.contains("agent:echo:delegate"),
+                "deny message must surface the missing scope, got `{msg}`"
+            );
+        }
+        other => panic!("expected Forbidden, got {other:?}"),
+    }
+}
+
+/// Cross-tenant delegation (remote agent in the registry) requires both
+/// `agent:<target>:delegate` AND `tenant:cross_delegate`. Without the
+/// latter, the call is denied even when the caller holds the wildcard
+/// delegate scope.
+#[tokio::test]
+async fn agent_call_denied_for_remote_agent_without_cross_delegate() {
+    use ork_core::agent_registry::{RemoteAgentEntry, TransportHint};
+    use std::time::{Duration, Instant};
+    use url::Url;
+
+    let tenant = TenantId::new();
+    // Registry seeded with `echo` as a *local* agent, plus `vendor` as a
+    // *remote* (TTL-cached) entry whose stub agent is the same EchoAgent
+    // shape. Only the locality bit matters for the cross-tenant gate.
+    let echo: Arc<dyn Agent> = Arc::new(EchoAgent::new("echo")) as Arc<dyn Agent>;
+    let vendor_card = card("vendor");
+    let vendor: Arc<dyn Agent> = Arc::new(EchoAgent::new("vendor")) as Arc<dyn Agent>;
+
+    let executor: Arc<Mutex<Option<Arc<AgentCallToolExecutor>>>> = Arc::new(Mutex::new(None));
+    let executor_capture = executor.clone();
+    let registry = Arc::new_cyclic(|registry_weak: &Weak<AgentRegistry>| {
+        let exec = Arc::new(AgentCallToolExecutor::new(
+            registry_weak.clone(),
+            None,
+            None,
+        ));
+        executor_capture
+            .try_lock()
+            .expect("uncontended in test")
+            .replace(exec);
+        AgentRegistry::from_agents(vec![echo])
+    });
+    registry
+        .upsert_remote_with_agent(
+            "vendor".to_string(),
+            RemoteAgentEntry {
+                card: vendor_card,
+                last_seen: Instant::now(),
+                ttl: Duration::from_secs(60),
+                transport_hint: TransportHint::HttpOnly {
+                    url: Url::parse("https://vendor.example.com/a2a").unwrap(),
+                },
+                agent: None,
+            },
+            vendor,
+        )
+        .await;
+    let exec = executor
+        .try_lock()
+        .expect("uncontended in test")
+        .clone()
+        .expect("executor set inside Arc::new_cyclic");
+
+    // Caller has the delegate wildcard but NOT `tenant:cross_delegate`.
+    let mut ctx = root_ctx(tenant);
+    ctx.caller.scopes = vec!["agent:*:delegate".into(), "tool:*:invoke".into()];
+
+    let err = exec
+        .execute(
+            &ctx,
+            "agent_call",
+            &serde_json::json!({"agent": "vendor", "prompt": "hi"}),
+        )
+        .await
+        .unwrap_err();
+    match err {
+        OrkError::Forbidden(msg) => {
+            assert!(
+                msg.contains("tenant:cross_delegate"),
+                "remote-agent denial must surface `tenant:cross_delegate`, got `{msg}`"
+            );
+            assert!(
+                msg.contains("vendor"),
+                "deny message should name the target agent, got `{msg}`"
+            );
+        }
+        other => panic!("expected Forbidden, got {other:?}"),
+    }
+
+    // With `tenant:cross_delegate` granted, the call gets past the gate
+    // (and reaches `execute_one_shot_delegation`, which talks to the
+    // EchoAgent stub).
+    ctx.caller.scopes = vec![
+        "agent:*:delegate".into(),
+        "tool:*:invoke".into(),
+        "tenant:cross_delegate".into(),
+    ];
+    let ok = exec
+        .execute(
+            &ctx,
+            "agent_call",
+            &serde_json::json!({"agent": "vendor", "prompt": "hi"}),
+        )
+        .await
+        .expect("with cross-delegate scope, call should succeed");
+    assert_eq!(ok["status"], "completed");
 }

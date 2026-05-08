@@ -79,6 +79,7 @@ async fn update_settings_persists_sealed_value_and_get_returns_plaintext() {
                 default_provider: None,
                 default_model: None,
                 artifact_retention_days: None,
+                scope_allowlist: None,
             },
         )
         .await
@@ -207,6 +208,7 @@ async fn legacy_mode_without_cipher_keeps_plaintext_on_disk() {
                 default_provider: None,
                 default_model: None,
                 artifact_retention_days: None,
+                scope_allowlist: None,
             },
         )
         .await

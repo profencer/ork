@@ -16,6 +16,7 @@ mime_guess = { workspace = true }
 ork-a2a = { workspace = true }
 ork-common = { workspace = true }
 ork-core = { workspace = true }
+ork-security = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

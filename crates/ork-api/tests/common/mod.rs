@@ -556,8 +556,25 @@ pub async fn test_state_with_agents(agent_ids: &[&str]) -> TestState {
 // =============================================================================
 
 /// `AuthContext` extension for direct extension-injection (skips JWT decode).
+///
+/// Mints the ADR-0021 §`Defaults` End-user scope set: `tenant:self`,
+/// `webui:access`, `agent:*:invoke`, `tool:*:invoke`,
+/// `artifact:tenant:read`, `artifact:tenant:write`,
+/// `model:default:default:invoke`. Tests that need an admin / ops posture
+/// or `agent:<id>:cancel` reach for [`auth_for_with_scopes`] directly.
 pub fn auth_for(tenant_id: TenantId) -> AuthContext {
-    auth_for_with_scopes(tenant_id, &[])
+    auth_for_with_scopes(
+        tenant_id,
+        &[
+            "tenant:self",
+            "webui:access",
+            "agent:*:invoke",
+            "tool:*:invoke",
+            "artifact:tenant:read",
+            "artifact:tenant:write",
+            "model:default:default:invoke",
+        ],
+    )
 }
 
 /// Same as [`auth_for`] but with an explicit scope list. ADR-0020 added

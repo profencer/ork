@@ -20,6 +20,7 @@
 //! [`ork_common::auth::AuthContext`] already carries on the inbound side
 //! (Phase A).
 
+pub mod audit;
 pub mod kms;
 pub mod mesh;
 pub mod scopes;
@@ -29,5 +30,5 @@ pub use kms::{Ciphertext, JwtSecretKekKms, KmsClient, KmsError};
 pub use mesh::{
     HmacMeshTokenSigner, MeshClaims, MeshTokenSigner, MeshVerificationError, mesh_token_header,
 };
-pub use scopes::intersect_scopes;
+pub use scopes::{ScopeChecker, intersect_scopes, scope_matches};
 pub use tenant_cipher::{SealedField, TenantSecretsCipher};

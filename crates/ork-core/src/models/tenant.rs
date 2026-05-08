@@ -53,6 +53,18 @@ pub struct TenantSettings {
     /// `None` = use operator `[retention]` defaults in the sweep worker.
     #[serde(default)]
     pub artifact_retention_days: Option<u32>,
+    /// ADR-0021 §`Per-tenant scope policy`. When `Some`, DevPortal honours
+    /// the list when minting tokens for this tenant, and ork-api re-checks
+    /// at request time as defence-in-depth: every inbound token's scopes
+    /// are intersected with this list. Each entry is validated through
+    /// `ScopeChecker::validate_format` at config-load time so a malformed
+    /// allowlist cannot silently lock a tenant out.
+    ///
+    /// `None` = no allowlist constraint (the default). `Some([])` = no
+    /// scopes allowed at all (effectively a tenant lockout — operators
+    /// asking for this almost always want `None` instead).
+    #[serde(default)]
+    pub scope_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +101,11 @@ pub struct UpdateTenantSettingsRequest {
     /// "clear override" at the API layer if we add explicit semantics later.
     #[serde(default)]
     pub artifact_retention_days: Option<u32>,
+    /// ADR-0021 §`Per-tenant scope policy`. `None` = leave the existing
+    /// allowlist unchanged. `Some([])` = explicit empty list (tenant
+    /// lockout). `Some(vec![…])` = replace.
+    #[serde(default)]
+    pub scope_allowlist: Option<Vec<String>>,
 }
 
 #[cfg(test)]
@@ -137,6 +154,7 @@ mod tests {
             default_provider: None,
             default_model: None,
             artifact_retention_days: None,
+            scope_allowlist: None,
         };
         let json = serde_json::to_value(&original).unwrap();
         let back: TenantSettings = serde_json::from_value(json).unwrap();

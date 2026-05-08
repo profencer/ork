@@ -217,3 +217,61 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
 // (`docs/adrs/0004-hybrid-kong-kafka-transport.md` §`Sync plane: Kong responsibilities`).
 // If a dev-only loopback limiter is ever needed, add it behind a cargo feature flag — do
 // not put it back on the main route stack.
+
+/// ADR-0021 §`Decision points`: short-circuit a handler with a 403 when
+/// the [`AuthContext`] does not carry `$required`. Emits the
+/// `audit.scope_denied` tracing event ADR-0021 §`Audit` mandates and
+/// returns a JSON `{ "error": "missing scope <required>" }` body so the
+/// existing handler error shape stays uniform.
+///
+/// The macro expects an [`AuthContext`] reference in scope as `$ctx`.
+/// Use it from inside a route handler:
+///
+/// ```ignore
+/// pub async fn cancel_task(
+///     Extension(ctx): Extension<AuthContext>,
+///     Path(agent_id): Path<String>,
+///     ...
+/// ) -> impl IntoResponse {
+///     require_scope!(ctx, &ork_common::auth::agent_cancel_scope(&agent_id));
+///     ...
+/// }
+/// ```
+///
+/// The audit event format mirrors the `tracing::info!` shape already
+/// emitted by the tenant CRUD handlers (ADR-0020 §`Auditing`) so a single
+/// log query covers both legacy and ADR-0021 deny lines.
+#[macro_export]
+macro_rules! require_scope {
+    ($ctx:expr, $required:expr) => {{
+        let __ctx: &$crate::middleware::AuthContext = &$ctx;
+        let __required: &str = &$required;
+        if !$crate::middleware::__scope_allows(&__ctx.scopes, __required) {
+            tracing::info!(
+                actor = %__ctx.user_id,
+                tenant_id = %__ctx.tenant_id,
+                tid_chain = ?__ctx.tenant_chain,
+                scope = %__required,
+                result = "forbidden",
+                event = ::ork_security::audit::SCOPE_DENIED_EVENT,
+                "ADR-0021 audit"
+            );
+            return (
+                ::axum::http::StatusCode::FORBIDDEN,
+                ::axum::Json(::serde_json::json!({
+                    "error": format!("missing scope {}", __required),
+                })),
+            )
+                .into_response();
+        }
+    }};
+}
+
+/// Implementation hook for [`require_scope!`]. The macro inlines a check
+/// against this function so call sites don't need to import
+/// [`ork_security::ScopeChecker`] directly. Keep it `#[doc(hidden)]`-flavoured
+/// (the leading underscore signals "macro support").
+#[must_use]
+pub fn __scope_allows(scopes: &[String], required: &str) -> bool {
+    ork_security::ScopeChecker::allows(scopes, required)
+}

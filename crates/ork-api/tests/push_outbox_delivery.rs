@@ -30,7 +30,9 @@ use tower::ServiceExt;
 use wiremock::matchers::{header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::common::{auth_for, build_worker, jsonrpc_request, read_body, test_state_with_push};
+use crate::common::{
+    auth_for, auth_for_with_scopes, build_worker, jsonrpc_request, read_body, test_state_with_push,
+};
 
 /// Wait for the wiremock server to record at least `n` requests, polling
 /// `received_requests()` until either the budget runs out or the count is
@@ -135,7 +137,20 @@ async fn delivery_worker_signs_and_posts_to_subscriber() {
         .header("content-type", "application/json")
         .body(Body::from(body))
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    // ADR-0021 §`Defaults`: `agent:<id>:cancel` is reserved for the
+    // Operator/admin profile; the End-user `auth_for` no longer carries
+    // it, so this test mints the cancel scope explicitly.
+    req.extensions_mut().insert(auth_for_with_scopes(
+        tenant,
+        &[
+            "tenant:self",
+            "agent:*:invoke",
+            "agent:*:cancel",
+            "tool:*:invoke",
+            "artifact:tenant:read",
+            "artifact:tenant:write",
+        ],
+    ));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 

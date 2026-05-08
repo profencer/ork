@@ -35,11 +35,23 @@ use crate::workflow::template::{parse_json_array, resolve_template};
 /// itself was operator-approved, so the engine carries the privileges
 /// the graph declared. Per-user scope-chain propagation across a
 /// workflow run is deferred to a follow-up ADR.
+///
+/// ADR-0021 §`Decision points` adds the runtime gates on
+/// `agent:<id>:invoke`, `agent:<id>:cancel`, `tool:<name>:invoke`, and
+/// `tool:mcp:<server>.<name>:invoke`. The engine carries the wildcard
+/// equivalents — the policy decision belongs to the workflow definition
+/// (operator-approved), not to the runtime.
 fn system_runtime_caller(tenant_id: TenantId) -> CallerIdentity {
     CallerIdentity {
         tenant_id,
         user_id: None,
-        scopes: vec!["agent:*:delegate".to_string()],
+        scopes: vec![
+            "agent:*:invoke".to_string(),
+            "agent:*:delegate".to_string(),
+            "agent:*:cancel".to_string(),
+            "tool:*:invoke".to_string(),
+            "tool:mcp:*:invoke".to_string(),
+        ],
         tenant_chain: vec![tenant_id],
         ..CallerIdentity::default()
     }

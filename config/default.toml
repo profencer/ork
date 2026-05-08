@@ -13,6 +13,83 @@ url = "redis://127.0.0.1/"
 jwt_secret = "change-me-in-production"
 token_expiry_hours = 24
 
+# ADR-0021 §`Defaults` — token-kind scope seeds.
+#
+# These lists document the per-token-kind defaults a token issuer
+# (DevPortal, in-cluster mesh signer, future `ork admin token mint`)
+# should grant when minting a token. ork-api itself does not mint
+# tokens today; the section is informational + a forward-compat anchor
+# for the issuer.
+#
+# - **End-user**: tokens minted for DevPortal-authenticated humans
+#   reaching ork through Kong. Seeded with the broad in-tenant
+#   privileges; admin actions live behind separate scopes.
+# - **Service / agent**: mesh-internal tokens minted by ork itself
+#   (ADR-0020 §`Mesh trust` `A2aRemoteAgent` outbound flow). The
+#   intersection rule lives in `ork_security::intersect_scopes` so the
+#   per-card accept-list narrows these.
+# - **Operator / admin**: human operators reaching tenant CRUD,
+#   schedule write, and `ops:read` admin views.
+# - **External A2A partner**: minted per-card by DevPortal. Default is
+#   the absolute minimum — invoke a single agent.
+#
+# The 4 lists below carry the canonical strings so an issuer can copy
+# them verbatim. Per-environment overrides (e.g. `[security.scopes.prod]`
+# stricter than `[security.scopes.staging]`) are reserved for a
+# follow-up ADR; the schema parser does not yet consume them.
+
+[security.scopes]
+end_user = [
+  "tenant:self",
+  "webui:access",
+  "agent:*:invoke",
+  "tool:*:invoke",
+  "artifact:tenant:read",
+  "artifact:tenant:write",
+  "model:default:default:invoke",
+]
+
+# Service / agent (mesh-internal). The ADR §`Defaults` table writes this
+# as `agent:<self>:invoke` plus the intersection of the caller's scopes
+# and the destination card's accept-list. Both `<self>` and the
+# intersection are placeholders — the issuer (DevPortal / mesh-token
+# signer) must substitute the real values before minting.
+#
+# service_agent = [
+#   "agent:<self>:invoke",
+#   # plus intersect_scopes(caller_scopes, destination_card.security.accepted)
+# ]
+
+operator_admin = [
+  "tenant:admin",
+  "ops:read",
+  "schedule:read",
+  "schedule:write",
+  "tenant:self",
+  "webui:access",
+  "agent:*:invoke",
+  "agent:*:cancel",
+  "tool:*:invoke",
+  "artifact:tenant:read",
+  "artifact:tenant:write",
+  "model:default:default:invoke",
+]
+
+# External A2A partner (per-card minting). The ADR §`Defaults` says
+# "minted per-card by DevPortal; default minimal: `agent:<that-agent>:invoke`
+# only". `<that-agent>` is a placeholder.
+#
+# external_a2a_partner = [
+#   "agent:<that-agent>:invoke",
+# ]
+
+# ADR-0021 §`Decision points` step 5 — model-scope enforcement is
+# off by default to keep dev easy. Set to `true` in production once the
+# token issuer is granting `model:<provider>:<model>:invoke`. The full
+# enforcement plumbing lands in a follow-up; today the flag is a config
+# anchor only.
+# enforce_model_scopes = false
+
 # OpenAI-compatible LLM provider catalog (ADR 0012).
 # `default_provider` matches one entry's `id`. Per-tenant overrides live
 # in `tenants.settings.llm_providers`; tenant entries with the same `id`

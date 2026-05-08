@@ -225,7 +225,11 @@ mod tests {
             caller: CallerIdentity {
                 tenant_id: tenant,
                 user_id: None,
-                scopes: vec![],
+                // ADR-0021 §`Defaults` End-user equivalent: wildcards
+                // for tool / MCP so the existing routing tests focus on
+                // the `mcp:` / `peer_*` arms, not the scope gate. A
+                // dedicated deny test below pins the gate behaviour.
+                scopes: vec!["tool:*:invoke".into(), "tool:mcp:*:invoke".into()],
                 ..CallerIdentity::default()
             },
             push_notification_url: None,

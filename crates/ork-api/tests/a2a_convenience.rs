@@ -13,7 +13,29 @@ use ork_core::ports::a2a_task_repo::{A2aMessageRow, A2aTaskRepository, A2aTaskRo
 use serde_json::json;
 use tower::ServiceExt;
 
-use crate::common::{auth_for, read_body, test_state, test_state_with_agents};
+use crate::common::{
+    auth_for, auth_for_with_scopes, read_body, test_state, test_state_with_agents,
+};
+
+/// ADR-0021 §`Vocabulary` row `ops:read`. The convenience routes
+/// (`GET /a2a/agents`, `GET /a2a/tasks/{task_id}`) are admin views, so
+/// every test in this file mints a token carrying the End-user default
+/// scope set plus `ops:read`. Keeps the two-line setup uniform.
+fn ops_auth(tenant: TenantId) -> ork_api::middleware::AuthContext {
+    auth_for_with_scopes(
+        tenant,
+        &[
+            "tenant:self",
+            "webui:access",
+            "agent:*:invoke",
+            "tool:*:invoke",
+            "artifact:tenant:read",
+            "artifact:tenant:write",
+            "model:default:default:invoke",
+            "ops:read",
+        ],
+    )
+}
 
 #[tokio::test]
 async fn list_agents_returns_all_known_cards() {
@@ -25,7 +47,7 @@ async fn list_agents_returns_all_known_cards() {
         .uri("/a2a/agents")
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    req.extensions_mut().insert(ops_auth(tenant));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = read_body(resp).await;
@@ -84,7 +106,7 @@ async fn lookup_task_returns_task_for_owning_tenant() {
         .uri(format!("/a2a/tasks/{}", task_id))
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    req.extensions_mut().insert(ops_auth(tenant));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = read_body(resp).await;
@@ -103,7 +125,7 @@ async fn lookup_task_returns_404_for_unknown_id() {
         .uri(format!("/a2a/tasks/{}", TaskId::new()))
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    req.extensions_mut().insert(ops_auth(tenant));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -138,9 +160,43 @@ async fn lookup_task_is_tenant_isolated() {
         .uri(format!("/a2a/tasks/{}", task_id))
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut().insert(auth_for(intruder));
+    req.extensions_mut().insert(ops_auth(intruder));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// ADR-0021 §`Vocabulary`: a token without `ops:read` cannot list the
+/// catalog or look tasks up. Pinned so a future refactor of the dispatcher
+/// cannot silently widen the surface.
+#[tokio::test]
+async fn list_agents_without_ops_read_is_forbidden() {
+    let t = test_state_with_agents(&["planner"]).await;
+    let tenant = t.tenant_id;
+    let app = a2a::protected_router(t.state.clone());
+    let mut req = Request::builder()
+        .method("GET")
+        .uri("/a2a/agents")
+        .body(Body::empty())
+        .unwrap();
+    // Default end-user posture: no `ops:read`.
+    req.extensions_mut().insert(auth_for(tenant));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn lookup_task_without_ops_read_is_forbidden() {
+    let t = test_state().await;
+    let tenant = t.tenant_id;
+    let app = a2a::protected_router(t.state.clone());
+    let mut req = Request::builder()
+        .method("GET")
+        .uri(format!("/a2a/tasks/{}", TaskId::new()))
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut().insert(auth_for(tenant));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -153,7 +209,7 @@ async fn lookup_task_with_bad_uuid_returns_400() {
         .uri("/a2a/tasks/not-a-uuid")
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    req.extensions_mut().insert(ops_auth(tenant));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

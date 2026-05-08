@@ -27,17 +27,35 @@ use ork_a2a::{
     A2aMethod, AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
     MessageSendParams, Part, Role, SendMessageResult, Task, TaskId, TaskState, TaskStatus,
 };
+use ork_common::auth::{OPS_READ_SCOPE, agent_cancel_scope, agent_invoke_scope};
 use ork_core::a2a::{AgentContext, CallerIdentity};
 use ork_core::agent_registry::AgentRegistry;
 use ork_core::embeds::EmbedContext;
 use ork_core::ports::a2a_task_repo::{A2aMessageRow, A2aTaskRow};
+use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::streaming::late_embed::LateEmbedResolver;
+use ork_storage::ScopeCheckedArtifactStore;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::artifact_inbound;
 use crate::middleware::AuthContext;
+use crate::require_scope;
 use crate::state::AppState;
+
+/// ADR-0021 §`Decision points` step 4: wrap the raw `state.artifact_store`
+/// with a [`ScopeCheckedArtifactStore`] keyed on the caller's scope set.
+/// Built per request so a long-lived `AppState` cannot leak the wrong
+/// scope into an `AgentContext`. Returns `None` when the operator has
+/// not configured artifacts.
+fn scoped_artifact_store(state: &AppState, auth: &AuthContext) -> Option<Arc<dyn ArtifactStore>> {
+    state.artifact_store.as_ref().map(|raw| {
+        Arc::new(ScopeCheckedArtifactStore::new(
+            raw.clone(),
+            auth.scopes.clone(),
+        )) as Arc<dyn ArtifactStore>
+    })
+}
 
 /// Minimal state slice the well-known handlers need.
 #[derive(Clone)]
@@ -119,7 +137,13 @@ pub fn protected_router(state: AppState) -> Router {
 /// ADR-0008 §convenience endpoints: `GET /a2a/agents` returns every card the
 /// registry knows about (local + remote), in the same shape as the per-agent
 /// well-known endpoint, for catalog UIs and external discovery.
-async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
+///
+/// ADR-0021 §`Vocabulary` — admin / catalog views are gated on `ops:read`.
+async fn list_agents(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> impl IntoResponse {
+    require_scope!(auth, OPS_READ_SCOPE);
     let cards: Vec<AgentCard> = state.agent_registry.list_cards().await;
     Json(cards).into_response()
 }
@@ -134,6 +158,7 @@ async fn lookup_task(
     Extension(auth): Extension<AuthContext>,
     Path(task_id_str): Path<String>,
 ) -> impl IntoResponse {
+    require_scope!(auth, OPS_READ_SCOPE);
     let Ok(uuid) = uuid::Uuid::parse_str(&task_id_str) else {
         return (StatusCode::BAD_REQUEST, "bad task id").into_response();
     };
@@ -221,6 +246,8 @@ async fn handle_message_send(
     agent_id: &str,
     env: JsonRpcRequest<serde_json::Value>,
 ) -> axum::response::Response {
+    // ADR-0021 §`Decision points` step 1.
+    require_scope!(*auth, agent_invoke_scope(agent_id));
     let params: MessageSendParams = match parse_params(&env) {
         Ok(p) => p,
         Err(e) => return e,
@@ -322,7 +349,7 @@ async fn handle_message_send(
         delegation_depth: 0,
         delegation_chain: Vec::new(),
         step_llm_overrides: None,
-        artifact_store: state.artifact_store.clone(),
+        artifact_store: scoped_artifact_store(state, auth),
         artifact_public_base: state
             .artifact_store
             .as_ref()
@@ -393,6 +420,8 @@ async fn handle_message_stream(
     use axum::response::sse::{Event, KeepAlive, Sse};
     use futures::StreamExt;
 
+    // ADR-0021 §`Decision points` step 1.
+    require_scope!(*auth, agent_invoke_scope(agent_id));
     let params: MessageSendParams = match parse_params(&env) {
         Ok(p) => p,
         Err(e) => return e,
@@ -491,7 +520,7 @@ async fn handle_message_stream(
         delegation_depth: 0,
         delegation_chain: Vec::new(),
         step_llm_overrides: None,
-        artifact_store: state.artifact_store.clone(),
+        artifact_store: scoped_artifact_store(state, auth),
         artifact_public_base: state
             .artifact_store
             .as_ref()
@@ -642,12 +671,16 @@ async fn handle_message_stream(
 async fn handle_stream_replay(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
-    Path((_agent_id, task_id_str)): Path<(String, String)>,
+    Path((agent_id, task_id_str)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use futures::StreamExt;
     use futures::stream;
+
+    // ADR-0021: SSE-resume is part of the agent invocation surface — requires
+    // the same `agent:<id>:invoke` scope as `message/stream`.
+    require_scope!(auth, agent_invoke_scope(&agent_id));
 
     let task_uuid = match uuid::Uuid::parse_str(&task_id_str) {
         Ok(id) => id,
@@ -763,6 +796,13 @@ async fn handle_tasks_cancel(
     agent_id: &str,
     env: JsonRpcRequest<serde_json::Value>,
 ) -> axum::response::Response {
+    // ADR-0021 §`Vocabulary` row `agent:<id>:cancel`. The cross-tenant cancel
+    // policy from §`Open questions` ("only with `tenant:cross_delegate` already
+    // in the chain") rides on top of existing tenant isolation: the repo's
+    // `update_state` is `WHERE tenant_id = $1`, so cross-tenant cancel today
+    // is structurally unreachable. The full cross-tenant path is a follow-up
+    // to ADR-0006 / ADR-0007.
+    require_scope!(*auth, agent_cancel_scope(agent_id));
     let params: ork_a2a::TaskIdParams = match parse_params(&env) {
         Ok(p) => p,
         Err(e) => return e,

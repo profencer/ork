@@ -290,6 +290,21 @@ impl AgentRegistry {
         guard.contains_key(id)
     }
 
+    /// `true` if `id` is registered as a **local** in-process agent.
+    ///
+    /// ADR-0021 §`Decision points` step 2 uses this as a *conservative*
+    /// proxy for "the call crosses a trust boundary" — true cross-tenant
+    /// awareness needs the destination card's tenant claim, which the
+    /// registry does not carry today. Until that arrives, any remote
+    /// agent counts as cross-tenant for `tenant:cross_delegate` purposes.
+    /// In-tenant remote delegation (a sibling ork process owned by the
+    /// same tenant) is therefore over-rejected; the follow-up that adds
+    /// `target_card.tenant_id` to `RemoteAgentEntry` will narrow this.
+    #[must_use]
+    pub fn is_local(&self, id: &AgentId) -> bool {
+        self.local.contains_key(id)
+    }
+
     /// Per-peer tool surface for the LLM (ADR 0006 §`LLM tool surface`).
     ///
     /// Walks every known agent (local + non-expired remote) and emits one

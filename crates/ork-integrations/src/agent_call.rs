@@ -17,6 +17,7 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use ork_a2a::AgentCallInput;
+use ork_common::auth::{TENANT_CROSS_DELEGATE_SCOPE, agent_delegate_scope};
 use ork_common::error::OrkError;
 use ork_core::a2a::AgentContext;
 use ork_core::agent_registry::AgentRegistry;
@@ -24,6 +25,7 @@ use ork_core::ports::a2a_task_repo::A2aTaskRepository;
 use ork_core::ports::delegation_publisher::DelegationPublisher;
 use ork_core::workflow::delegation::{execute_one_shot_delegation, map_input_err};
 use ork_core::workflow::engine::ToolExecutor;
+use ork_security::{ScopeChecker, audit};
 
 /// Tool executor for the `agent_call` tool. Routes requests through the shared
 /// [`execute_one_shot_delegation`] helper so delegation semantics match the
@@ -122,11 +124,50 @@ impl ToolExecutor for AgentCallToolExecutor {
             )));
         }
 
-        // TODO(ADR-0021): once the central RBAC helper lands, gate this on the
-        //                 `agent:<input.agent>:delegate` scope of `ctx.caller`.
-
         let parsed = AgentCallInput::from_value(input).map_err(map_input_err)?;
         let registry = self.registry()?;
+
+        // ADR-0021 §`Decision points` step 2.
+        //
+        // Always require `agent:<target>:delegate` on the caller. When the
+        // resolved target is a **remote** agent (i.e. comes from
+        // `AgentRegistry::remote`, not `local`), the call crosses a trust
+        // boundary by definition — `A2aRemoteAgent` will mint a fresh mesh
+        // token and append the originator's tenant id to `tid_chain`.
+        // ADR-0021 §`Decision points` step 2 makes the originator opt in
+        // explicitly via `tenant:cross_delegate`; otherwise accidental tenant
+        // chains are blocked by default.
+        ScopeChecker::require(&ctx.caller.scopes, &agent_delegate_scope(&parsed.agent))?;
+        if !registry.is_local(&parsed.agent) {
+            ScopeChecker::require(&ctx.caller.scopes, TENANT_CROSS_DELEGATE_SCOPE).map_err(
+                |_| {
+                    tracing::info!(
+                        actor = ?ctx.caller.user_id,
+                        tenant_id = %ctx.tenant_id,
+                        tid_chain = ?ctx.caller.tenant_chain,
+                        scope = TENANT_CROSS_DELEGATE_SCOPE,
+                        target_agent = %parsed.agent,
+                        result = "forbidden",
+                        event = audit::SCOPE_DENIED_EVENT,
+                        "ADR-0021 audit: cross-tenant delegation blocked"
+                    );
+                    OrkError::Forbidden(format!(
+                        "missing scope {TENANT_CROSS_DELEGATE_SCOPE} (cross-tenant delegation to remote agent `{}`)",
+                        parsed.agent
+                    ))
+                },
+            )?;
+            // ADR-0021 §`Audit`: every successful cross-tenant grant is a
+            // `audit.sensitive_grant` event so external SIEMs can pivot on it.
+            tracing::info!(
+                actor = ?ctx.caller.user_id,
+                tenant_id = %ctx.tenant_id,
+                tid_chain = ?ctx.caller.tenant_chain,
+                target_agent = %parsed.agent,
+                event = audit::SENSITIVE_GRANT_EVENT,
+                "ADR-0021 audit: cross-tenant delegation granted"
+            );
+        }
 
         let outcome = execute_one_shot_delegation(
             ctx,

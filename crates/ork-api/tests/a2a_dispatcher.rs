@@ -21,7 +21,27 @@ use ork_core::ports::a2a_task_repo::{A2aMessageRow, A2aTaskRepository, A2aTaskRo
 use serde_json::json;
 use tower::ServiceExt;
 
-use crate::common::{auth_for, jsonrpc_request, read_body, test_state};
+use crate::common::{auth_for, auth_for_with_scopes, jsonrpc_request, read_body, test_state};
+
+/// ADR-0021 §`Defaults` reserves `agent:<id>:cancel` for the
+/// Operator/admin profile. Cancel-test fixtures mint the End-user
+/// scope set plus `agent:*:cancel` so the gate passes; the deny path
+/// is pinned by `tasks_cancel_without_cancel_scope_is_forbidden`.
+fn auth_with_cancel(tenant_id: ork_common::types::TenantId) -> ork_api::middleware::AuthContext {
+    auth_for_with_scopes(
+        tenant_id,
+        &[
+            "tenant:self",
+            "webui:access",
+            "agent:*:invoke",
+            "agent:*:cancel",
+            "tool:*:invoke",
+            "artifact:tenant:read",
+            "artifact:tenant:write",
+            "model:default:default:invoke",
+        ],
+    )
+}
 
 #[tokio::test]
 async fn unknown_method_returns_method_not_found() {
@@ -345,7 +365,7 @@ async fn tasks_cancel_marks_state_canceled_and_returns_task() {
         .header("content-type", "application/json")
         .body(Body::from(body))
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    req.extensions_mut().insert(auth_with_cancel(tenant));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = read_body(resp).await;
@@ -377,10 +397,39 @@ async fn tasks_cancel_unknown_task_returns_task_not_found() {
         .header("content-type", "application/json")
         .body(Body::from(body))
         .unwrap();
-    req.extensions_mut().insert(auth_for(tenant));
+    req.extensions_mut().insert(auth_with_cancel(tenant));
     let resp = app.oneshot(req).await.unwrap();
     let v = read_body(resp).await;
     assert_eq!(v["error"]["code"], JsonRpcError::TASK_NOT_FOUND);
+}
+
+/// ADR-0021 §`Vocabulary`: `agent:<id>:cancel` is reserved for the
+/// Operator/admin profile. End-user tokens get a 403 without it.
+#[tokio::test]
+async fn tasks_cancel_without_cancel_scope_is_forbidden() {
+    let t = test_state().await;
+    let tenant = t.tenant_id;
+    let task_id = seed_task_with_message(&*t.task_repo, tenant, "planner").await;
+    let app = a2a::protected_router(t.state);
+    let params = TaskIdParams {
+        id: task_id,
+        metadata: None,
+    };
+    let body = jsonrpc_request(
+        json!("rpc-deny"),
+        "tasks/cancel",
+        serde_json::to_value(&params).unwrap(),
+    );
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/a2a/agents/planner")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    // End-user defaults from `auth_for` no longer include `agent:*:cancel`.
+    req.extensions_mut().insert(auth_for(tenant));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
