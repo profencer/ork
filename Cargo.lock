@@ -3235,6 +3235,7 @@ dependencies = [
  "ork-mcp",
  "ork-persistence",
  "ork-push",
+ "ork-security",
  "ork-storage",
  "ork-webui",
  "redis",
@@ -3420,6 +3421,7 @@ dependencies = [
  "ork-cache",
  "ork-common",
  "ork-core",
+ "ork-security",
  "ork-storage",
  "ork-tool",
  "reqwest 0.12.28",
@@ -3537,6 +3539,23 @@ dependencies = [
  "url",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "ork-security"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "jsonwebtoken",
+ "ork-common",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -114,7 +114,10 @@ impl fmt::Debug for AgentContext {
 }
 
 impl AgentContext {
-    /// Build a child context for an `await:true` delegation to `target`.
+    /// Build a child context for an `await:true` delegation to `target` running
+    /// under `target_tenant`. For ADR-0006 baseline (same-tenant) callers,
+    /// pass `parent_ctx.tenant_id`; ADR-0020 cross-tenant delegations pass the
+    /// destination's tenant id (resolved from its [`AgentCard`]).
     ///
     /// Per ADR 0006:
     /// - the parent's [`CancellationToken`] is cloned so cancelling the parent cancels the child;
@@ -122,11 +125,25 @@ impl AgentContext {
     /// - `delegation_depth` is incremented and bounded by [`MAX_DELEGATION_DEPTH`];
     /// - delegating to an agent already in the chain (a cycle) is rejected.
     ///
+    /// Per ADR 0020 §`Tenant id propagation across delegation`:
+    /// - When `target_tenant == self.tenant_id` the call is in-tenant and
+    ///   `caller.tenant_chain` is left unchanged.
+    /// - When `target_tenant != self.tenant_id` the call crosses a trust
+    ///   boundary; the new target tenant is appended to `caller.tenant_chain`
+    ///   so downstream `tenant:admin` / `agent:<x>:delegate` checks can see
+    ///   the full ordered transit. The chain invariant is `chain[-1] ==
+    ///   ctx.tenant_id` (Phase A's middleware seeds the canonical default
+    ///   `[tenant_id]` on inbound).
+    ///
     /// Cycle and depth-cap rejections return [`OrkError::Validation`] (not
     /// `Workflow`) so the LLM tool loop can recover from a mis-routed
     /// `agent_call` per ADR-0010 §`Tool error semantics`. They describe a
     /// bad request from the model, not an engine-internal failure.
-    pub fn child_for_delegation(&self, target: &AgentId) -> Result<Self, OrkError> {
+    pub fn child_for_delegation(
+        &self,
+        target: &AgentId,
+        target_tenant: TenantId,
+    ) -> Result<Self, OrkError> {
         if self.delegation_depth >= MAX_DELEGATION_DEPTH {
             return Err(OrkError::Validation(format!(
                 "max_delegation_depth ({MAX_DELEGATION_DEPTH}) exceeded delegating to {target}"
@@ -142,12 +159,19 @@ impl AgentContext {
         let mut chain = self.delegation_chain.clone();
         chain.push(target.clone());
 
+        let mut child_caller = self.caller.clone();
+        if target_tenant != self.tenant_id
+            && child_caller.tenant_chain.last() != Some(&target_tenant)
+        {
+            child_caller.tenant_chain.push(target_tenant);
+        }
+
         Ok(Self {
-            tenant_id: self.tenant_id,
+            tenant_id: target_tenant,
             task_id: TaskId::new(),
             parent_task_id: Some(self.task_id),
             cancel: self.cancel.clone(),
-            caller: self.caller.clone(),
+            caller: child_caller,
             push_notification_url: None,
             trace_ctx: self.trace_ctx.clone(),
             context_id: self.context_id,
@@ -178,6 +202,8 @@ mod tests {
                 tenant_id: tenant,
                 user_id: None,
                 scopes: vec![],
+                // Match `auth_middleware`'s canonical default per ADR-0020 M1.
+                tenant_chain: vec![tenant],
                 ..CallerIdentity::default()
             },
             push_notification_url: None,
@@ -198,7 +224,7 @@ mod tests {
         let tenant = TenantId(Uuid::nil());
         let parent = root_ctx(tenant);
         let child = parent
-            .child_for_delegation(&"researcher".to_string())
+            .child_for_delegation(&"researcher".to_string(), tenant)
             .expect("first hop allowed");
         assert_eq!(child.delegation_depth, 1);
         assert_eq!(child.parent_task_id, Some(parent.task_id));
@@ -211,13 +237,74 @@ mod tests {
         let tenant = TenantId(Uuid::nil());
         let parent = root_ctx(tenant);
         let child = parent
-            .child_for_delegation(&"writer".to_string())
+            .child_for_delegation(&"writer".to_string(), tenant)
             .expect("ok");
         parent.cancel.cancel();
         assert!(
             child.cancel.is_cancelled(),
             "cancelling the parent must cancel the child"
         );
+    }
+
+    /// ADR-0020 §`Tenant id propagation across delegation`: same-tenant
+    /// hops do NOT extend `tenant_chain`. The chain only grows when the
+    /// target's tenant differs from the source.
+    #[test]
+    fn same_tenant_hop_leaves_tenant_chain_unchanged() {
+        let tenant = TenantId(Uuid::nil());
+        let parent = root_ctx(tenant);
+        let child = parent
+            .child_for_delegation(&"in-tenant".to_string(), tenant)
+            .expect("ok");
+        assert_eq!(
+            child.caller.tenant_chain,
+            vec![tenant],
+            "same-tenant delegation must not extend the chain"
+        );
+        assert_eq!(child.tenant_id, tenant);
+    }
+
+    /// Cross-tenant hop appends the target tenant to the caller's chain
+    /// and re-binds `ctx.tenant_id` to the target. Two cross-tenant hops
+    /// in a row produce a length-3 chain `[origin, mid, leaf]`.
+    #[test]
+    fn cross_tenant_hop_extends_tenant_chain() {
+        let origin = TenantId(Uuid::from_u128(0xaaaa));
+        let mid = TenantId(Uuid::from_u128(0xbbbb));
+        let leaf = TenantId(Uuid::from_u128(0xcccc));
+        let root = root_ctx(origin);
+        let hop1 = root
+            .child_for_delegation(&"a".to_string(), mid)
+            .expect("hop1");
+        assert_eq!(hop1.tenant_id, mid);
+        assert_eq!(hop1.caller.tenant_chain, vec![origin, mid]);
+
+        let hop2 = hop1
+            .child_for_delegation(&"b".to_string(), leaf)
+            .expect("hop2");
+        assert_eq!(hop2.tenant_id, leaf);
+        assert_eq!(hop2.caller.tenant_chain, vec![origin, mid, leaf]);
+    }
+
+    /// Idempotency: if the chain already terminates with `target_tenant`
+    /// (e.g. caller passed the wrong target tenant explicitly), do not
+    /// double-append. Defensive — production paths shouldn't trigger this.
+    #[test]
+    fn cross_tenant_hop_does_not_double_append() {
+        let origin = TenantId(Uuid::from_u128(0xaaaa));
+        let mid = TenantId(Uuid::from_u128(0xbbbb));
+        let root = root_ctx(origin);
+        let hop1 = root
+            .child_for_delegation(&"a".to_string(), mid)
+            .expect("hop1");
+        // Now `hop1.tenant_id == mid` and `chain == [origin, mid]`. A
+        // (hypothetical) caller asking to delegate to mid again from
+        // hop1's perspective would NOT cross a tenant boundary —
+        // same-tenant rule applies.
+        let hop2 = hop1
+            .child_for_delegation(&"b".to_string(), mid)
+            .expect("hop2");
+        assert_eq!(hop2.caller.tenant_chain, vec![origin, mid]);
     }
 
     /// ADR-0010 §`Tool error semantics`: the `agent_call` / `peer_*` tool
@@ -235,9 +322,11 @@ mod tests {
     fn rejects_cycle_in_chain_as_validation_error() {
         let tenant = TenantId(Uuid::nil());
         let mut ctx = root_ctx(tenant);
-        ctx = ctx.child_for_delegation(&"a".to_string()).unwrap();
-        ctx = ctx.child_for_delegation(&"b".to_string()).unwrap();
-        let err = ctx.child_for_delegation(&"a".to_string()).unwrap_err();
+        ctx = ctx.child_for_delegation(&"a".to_string(), tenant).unwrap();
+        ctx = ctx.child_for_delegation(&"b".to_string(), tenant).unwrap();
+        let err = ctx
+            .child_for_delegation(&"a".to_string(), tenant)
+            .unwrap_err();
         assert!(
             matches!(err, OrkError::Validation(ref msg) if msg.contains("cycle")),
             "cycle errors must be recoverable Validation errors per ADR-0010, \
@@ -258,7 +347,7 @@ mod tests {
             model: Some("custom-model".into()),
         });
         let child = parent
-            .child_for_delegation(&"writer".to_string())
+            .child_for_delegation(&"writer".to_string(), tenant)
             .expect("ok");
         assert!(child.step_llm_overrides.is_none());
     }
@@ -269,11 +358,11 @@ mod tests {
         let mut ctx = root_ctx(tenant);
         for i in 0..MAX_DELEGATION_DEPTH {
             ctx = ctx
-                .child_for_delegation(&format!("agent-{i}"))
+                .child_for_delegation(&format!("agent-{i}"), tenant)
                 .expect("under cap");
         }
         let err = ctx
-            .child_for_delegation(&"one-too-many".to_string())
+            .child_for_delegation(&"one-too-many".to_string(), tenant)
             .unwrap_err();
         assert!(
             matches!(err, OrkError::Validation(ref msg) if msg.contains("max_delegation_depth")),

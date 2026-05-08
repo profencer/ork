@@ -92,6 +92,7 @@ fn agent_with(
         reqwest::Client::new(),
         &cfg,
         None,
+        None,
     )
 }
 
@@ -490,6 +491,7 @@ async fn builder_build_inline_walks_card_url_then_constructs_agent() {
         Arc::new(InMemoryCache::new()) as Arc<dyn ork_cache::KeyValueCache>,
         A2aAuth::None,
         fast_retry_cfg(),
+        None,
         None,
     );
     let card_url: url::Url = format!("{}/.well-known/agent-card.json", server.uri())

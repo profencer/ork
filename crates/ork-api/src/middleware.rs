@@ -5,6 +5,16 @@
 //! request extensions without re-parsing. The `tenant:admin` scope unlocks
 //! `X-Tenant-Id` impersonation so the ops dashboard / break-glass tooling can
 //! act on a target tenant without minting per-tenant tokens.
+//!
+//! ADR-0020 §`Mesh trust — JWT claims and propagation`: when a request
+//! carries `X-Ork-Mesh-Token` AND a [`MeshTokenSigner`] is configured, the
+//! mesh claims **override** the bearer-derived `AuthContext` — `tenant_id`
+//! moves to the mesh `tenant_id`, `tenant_chain` is replaced with the mesh
+//! chain, scopes / trust_class come from the mesh body. The bearer is still
+//! required (it authenticates the mesh peer); the mesh token attests to
+//! the originator's identity at the moment the call was issued.
+
+use std::sync::Arc;
 
 use axum::{
     Json,
@@ -14,8 +24,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use jsonwebtoken::{DecodingKey, Validation, decode};
-use ork_common::auth::{ADMIN_IMPERSONATION_SCOPE, IMPERSONATION_HEADER, JwtClaims};
+use ork_common::auth::{ADMIN_IMPERSONATION_SCOPE, IMPERSONATION_HEADER, JwtClaims, TrustClass};
 use ork_common::types::TenantId;
+use ork_security::{MeshTokenSigner, mesh_token_header};
 use uuid::Uuid;
 
 pub use ork_common::auth::AuthContext;
@@ -104,7 +115,7 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
         tenant_chain.push(TenantId(tenant_uuid));
     }
 
-    let ctx = AuthContext {
+    let mut ctx = AuthContext {
         tenant_id: TenantId(tenant_uuid),
         user_id: claims.sub,
         scopes: claims.scopes,
@@ -113,6 +124,55 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
         trust_class: claims.trust_class,
         agent_id: claims.agent_id,
     };
+
+    // ADR-0020 §`Mesh trust`: if the request carries `X-Ork-Mesh-Token` and
+    // we have a configured signer, verify it and prefer its claims over the
+    // bearer-derived context. The bearer's role here is "this peer is
+    // allowed to talk to us at all"; the mesh token attests to the
+    // originator's identity at the time the call was issued.
+    let signer_opt = req.extensions().get::<Arc<dyn MeshTokenSigner>>().cloned();
+    let mesh_token_str = req
+        .headers()
+        .get(mesh_token_header())
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    if let (Some(signer), Some(token)) = (signer_opt, mesh_token_str) {
+        match signer.verify(&token).await {
+            Ok(mesh_claims) => {
+                tracing::info!(
+                    actor = %mesh_claims.sub,
+                    tenant_id = %mesh_claims.tenant_id,
+                    tid_chain = ?mesh_claims.tenant_chain,
+                    agent_id = ?mesh_claims.agent_id,
+                    scopes = ?mesh_claims.scopes,
+                    result = "verified",
+                    "ADR-0020 mesh-token audit"
+                );
+                ctx.tenant_id = mesh_claims.tenant_id;
+                ctx.tenant_chain = mesh_claims.tenant_chain;
+                ctx.scopes = mesh_claims.scopes;
+                ctx.trust_tier = mesh_claims.trust_tier;
+                ctx.trust_class = TrustClass::Agent;
+                ctx.agent_id = mesh_claims.agent_id;
+                // `user_id` is intentionally NOT overwritten so the audit
+                // trail records both the immediate peer (bearer.sub) and
+                // the originating principal (mesh_claims.sub via the
+                // verified-claim audit event above).
+            }
+            Err(err) => {
+                tracing::info!(
+                    error = %err,
+                    result = "rejected",
+                    "ADR-0020 mesh-token audit"
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({ "error": format!("invalid mesh token: {err}") })),
+                )
+                    .into_response();
+            }
+        }
+    }
 
     req.extensions_mut().insert(ctx);
     next.run(req).await

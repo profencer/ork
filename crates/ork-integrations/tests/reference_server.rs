@@ -133,6 +133,7 @@ async fn reference_server_message_send_round_trip() {
         reqwest::Client::new(),
         &cfg(),
         None,
+        None,
     );
 
     let reply = agent
@@ -168,6 +169,7 @@ async fn reference_server_message_stream_round_trip() {
         A2aAuth::None,
         reqwest::Client::new(),
         &cfg(),
+        None,
         None,
     );
 

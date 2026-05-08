@@ -33,7 +33,12 @@ fn root_ctx(tenant: TenantId) -> AgentContext {
         caller: CallerIdentity {
             tenant_id: tenant,
             user_id: None,
-            scopes: vec![],
+            // ADR-0020 §`Tenant id propagation across delegation`: tests
+            // that exercise depth/cycle on `execute_one_shot_delegation`
+            // need the policy gate to admit them, so grant the wildcard
+            // delegate scope here. The scope itself is not the SUT.
+            scopes: vec!["agent:*:delegate".to_string()],
+            tenant_chain: vec![tenant],
             ..CallerIdentity::default()
         },
         push_notification_url: None,

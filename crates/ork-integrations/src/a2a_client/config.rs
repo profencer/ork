@@ -33,6 +33,10 @@ pub struct A2aClientConfig {
     pub artifact_meta: Option<Arc<dyn ArtifactMetaRepo>>,
     /// Public API base, no path (e.g. `https://ork.example`); `None` disables rewrite.
     pub artifact_public_base: Option<String>,
+    /// ADR-0020 §`Mesh trust`: lifetime stamped on minted `X-Ork-Mesh-Token`
+    /// claims. Default 60s — long enough that a single retried request can
+    /// reuse the token, short enough that a leaked one is replay-safe.
+    pub mesh_token_ttl: chrono::Duration,
 }
 
 impl std::fmt::Debug for A2aClientConfig {
@@ -67,6 +71,7 @@ impl Default for A2aClientConfig {
             artifact_store: None,
             artifact_meta: None,
             artifact_public_base: None,
+            mesh_token_ttl: chrono::Duration::seconds(60),
         }
     }
 }

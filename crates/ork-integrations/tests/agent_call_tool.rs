@@ -163,7 +163,14 @@ fn root_ctx(tenant: TenantId) -> AgentContext {
         caller: CallerIdentity {
             tenant_id: tenant,
             user_id: None,
-            scopes: vec![],
+            // ADR-0020 §`Tenant id propagation across delegation`: the
+            // policy gate in `execute_one_shot_delegation` requires
+            // `agent:<target>:delegate`. Tests don't exercise the gate
+            // itself (separate suite); grant the wildcard so the existing
+            // assertions still measure the SUT (delegation outcome shape,
+            // publisher routing).
+            scopes: vec!["agent:*:delegate".to_string()],
+            tenant_chain: vec![tenant],
             ..CallerIdentity::default()
         },
         push_notification_url: None,

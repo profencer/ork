@@ -15,6 +15,7 @@ use ork_core::a2a::context::AgentId;
 use ork_core::ports::agent::Agent;
 use ork_core::ports::delegation_publisher::DelegationPublisher;
 use ork_core::ports::remote_agent_builder::RemoteAgentBuilder;
+use ork_security::MeshTokenSigner;
 use secrecy::SecretString;
 use url::Url;
 
@@ -24,13 +25,16 @@ use super::card_fetch::CardFetcher;
 use super::config::A2aClientConfig;
 
 /// Default builder: applies a single shared HTTP client + cache + auth +
-/// (optional) Kafka publisher to every constructed agent.
+/// (optional) Kafka publisher + (optional) mesh token signer to every
+/// constructed agent. The signer is shared across every outbound
+/// `A2aRemoteAgent`, so a single ork instance mints with one issuer/audience.
 pub struct A2aRemoteAgentBuilder {
     pub http: reqwest::Client,
     pub cache: Arc<dyn KeyValueCache>,
     pub default_auth: A2aAuth,
     pub default_cfg: A2aClientConfig,
     pub kafka: Option<Arc<dyn DelegationPublisher>>,
+    pub mesh_signer: Option<Arc<dyn MeshTokenSigner>>,
 }
 
 impl A2aRemoteAgentBuilder {
@@ -40,6 +44,7 @@ impl A2aRemoteAgentBuilder {
         default_auth: A2aAuth,
         default_cfg: A2aClientConfig,
         kafka: Option<Arc<dyn DelegationPublisher>>,
+        mesh_signer: Option<Arc<dyn MeshTokenSigner>>,
     ) -> Self {
         Self {
             http,
@@ -47,6 +52,7 @@ impl A2aRemoteAgentBuilder {
             default_auth,
             default_cfg,
             kafka,
+            mesh_signer,
         }
     }
 
@@ -72,6 +78,7 @@ impl A2aRemoteAgentBuilder {
             self.http.clone(),
             &self.default_cfg,
             self.kafka.clone(),
+            self.mesh_signer.clone(),
         )))
     }
 }
@@ -223,6 +230,7 @@ mod tests {
             A2aAuth::None,
             A2aClientConfig::default(),
             None,
+            None,
         );
         let card = vendor_card(Some("https://vendor.example.com/a2a"));
         let agent = builder.build(card).await.unwrap();
@@ -236,6 +244,7 @@ mod tests {
             Arc::new(InMemoryCache::new()) as Arc<dyn KeyValueCache>,
             A2aAuth::None,
             A2aClientConfig::default(),
+            None,
             None,
         );
         let card = vendor_card(None);

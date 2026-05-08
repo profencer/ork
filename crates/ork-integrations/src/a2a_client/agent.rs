@@ -23,7 +23,8 @@ use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use futures::stream::{BoxStream, StreamExt};
 use ork_a2a::extensions::{
-    EXT_TENANT_REQUIRED, EXT_TRANSPORT_HINT, PARAM_KAFKA_REQUEST_TOPIC, PARAM_TENANT_HEADER,
+    EXT_MESH_TRUST, EXT_TENANT_REQUIRED, EXT_TRANSPORT_HINT, PARAM_ACCEPTED_SCOPES,
+    PARAM_KAFKA_REQUEST_TOPIC, PARAM_TENANT_HEADER,
 };
 use ork_a2a::{
     A2aMethod, AgentCard, JsonRpcRequest, JsonRpcResponse, MessageSendParams, SendMessageResult,
@@ -35,6 +36,7 @@ use ork_core::ports::agent::{Agent, AgentEventStream};
 use ork_core::ports::artifact_meta_repo::ArtifactMetaRepo;
 use ork_core::ports::artifact_store::ArtifactStore;
 use ork_core::ports::delegation_publisher::DelegationPublisher;
+use ork_security::{MeshClaims, MeshTokenSigner, intersect_scopes, mesh_token_header};
 use reqwest::StatusCode;
 use secrecy::SecretString;
 use serde::Serialize;
@@ -105,11 +107,23 @@ pub struct A2aRemoteAgent {
     artifact_store: Option<Arc<dyn ArtifactStore>>,
     artifact_meta: Option<Arc<dyn ArtifactMetaRepo>>,
     artifact_public_base: Option<String>,
+    /// ADR-0020 §`Mesh trust`: optional signer used to mint
+    /// `X-Ork-Mesh-Token` on every outbound request. `None` is the legacy
+    /// path (no mesh-token attestation; useful for dev / single-mesh
+    /// deployments where the bearer token is the only trust primitive).
+    mesh_signer: Option<Arc<dyn MeshTokenSigner>>,
+    /// Card-declared `accepted_scopes` (ADR-0020 §`Mesh trust`,
+    /// `EXT_MESH_TRUST`). Empty when the card is silent — `intersect_scopes`
+    /// treats that as identity (legacy behaviour).
+    accepted_scopes: Vec<String>,
+    /// Lifetime stamped onto minted mesh tokens.
+    mesh_token_ttl: chrono::Duration,
 }
 
 impl A2aRemoteAgent {
     /// Build a new remote agent. The HTTP client is taken as-is so callers can
     /// share a single `reqwest::Client` (connection pool) across many remotes.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: AgentId,
         card: AgentCard,
@@ -118,8 +132,10 @@ impl A2aRemoteAgent {
         http: reqwest::Client,
         cfg: &A2aClientConfig,
         kafka: Option<Arc<dyn DelegationPublisher>>,
+        mesh_signer: Option<Arc<dyn MeshTokenSigner>>,
     ) -> Self {
         let tenant_header = resolve_tenant_header(&card);
+        let accepted_scopes = card_accepted_scopes(&card);
         let token_provider = match &auth {
             A2aAuth::OAuth2AuthorizationCode { token_provider } => Some(token_provider.clone()),
             _ => None,
@@ -140,7 +156,42 @@ impl A2aRemoteAgent {
             artifact_store: cfg.artifact_store.clone(),
             artifact_meta: cfg.artifact_meta.clone(),
             artifact_public_base: cfg.artifact_public_base.clone(),
+            mesh_signer,
+            accepted_scopes,
+            mesh_token_ttl: cfg.mesh_token_ttl,
         }
+    }
+
+    /// ADR-0020 §`Mesh trust`: mint a short-lived `X-Ork-Mesh-Token` for
+    /// this outbound call. Returns `Ok(None)` when no signer is wired (the
+    /// legacy / dev path) so callers can `Option::map(...)` the header on.
+    async fn mint_mesh_token(&self, ctx: &AgentContext) -> Result<Option<String>, OrkError> {
+        let Some(signer) = &self.mesh_signer else {
+            return Ok(None);
+        };
+        let scopes = intersect_scopes(&ctx.caller.scopes, &self.accepted_scopes);
+        let claims = MeshClaims::new(
+            // The originator's user/agent identity becomes the `sub`. Falling
+            // back to "agent:<target>" when the caller has no user/agent id
+            // keeps the token meaningful for system-initiated calls.
+            ctx.caller
+                .agent_id
+                .clone()
+                .map(|aid| format!("agent:{aid}"))
+                .or_else(|| ctx.caller.user_id.as_ref().map(|u| format!("user:{}", u.0)))
+                .unwrap_or_else(|| format!("agent:{}", self.id)),
+            ctx.tenant_id,
+            ctx.caller.tenant_chain.clone(),
+            scopes,
+            ctx.caller.trust_tier,
+            ork_common::auth::TrustClass::Agent,
+            ctx.caller.agent_id.clone(),
+            signer.issuer().to_string(),
+            signer.audience().to_string(),
+            self.mesh_token_ttl,
+        );
+        let token = signer.mint(claims).await?;
+        Ok(Some(token))
     }
 
     /// When [`Self::artifact_store`], `artifact_meta`, and `artifact_public_base` are
@@ -228,18 +279,25 @@ impl A2aRemoteAgent {
         self.base_url.clone()
     }
 
-    /// Apply tenant header, traceparent, user-agent, and auth header to `req`.
+    /// Apply tenant header, traceparent, user-agent, mesh token (ADR-0020),
+    /// and auth header to `req`. The mesh token is minted by the caller (see
+    /// [`Self::mint_mesh_token`]) and passed in pre-built so a single retry
+    /// loop reuses the same token across attempts within its TTL.
     fn apply_default_headers(
         &self,
         mut req: reqwest::RequestBuilder,
         ctx: &AgentContext,
         bearer: Option<&SecretString>,
+        mesh_token: Option<&str>,
     ) -> reqwest::RequestBuilder {
         req = req
             .header("user-agent", &self.user_agent)
             .header(self.tenant_header.as_str(), ctx.tenant_id.to_string());
         if let Some(tp) = ctx.trace_ctx.as_deref() {
             req = req.header("traceparent", tp);
+        }
+        if let Some(token) = mesh_token {
+            req = req.header(mesh_token_header(), token);
         }
         apply_auth(req, &self.auth, bearer)
     }
@@ -257,6 +315,9 @@ impl A2aRemoteAgent {
         R: DeserializeOwned,
     {
         let bearer = self.resolve_bearer().await?;
+        // Mint failures abort the request before retries: signing is local
+        // CPU and a failure means misconfiguration, not transient transport.
+        let mesh_token = self.mint_mesh_token(ctx).await?;
         let url = self.rpc_url();
         let body = serde_json::to_vec(&envelope)
             .map_err(|e| OrkError::Internal(format!("serialize JSON-RPC envelope: {e}")))?;
@@ -269,7 +330,7 @@ impl A2aRemoteAgent {
                 .post(url_for_retry.clone())
                 .header("content-type", "application/json")
                 .body(body.clone());
-            let req = self.apply_default_headers(req, ctx, bearer.as_ref());
+            let req = self.apply_default_headers(req, ctx, bearer.as_ref(), mesh_token.as_deref());
             let resp = req.send().await.map_err(|e| RetryableError::Transient {
                 msg: format!("transport error to {url_for_retry}: {e}"),
                 retry_after: None,
@@ -364,6 +425,7 @@ impl A2aRemoteAgent {
         P: Serialize + Send + Sync,
     {
         let bearer = self.resolve_bearer().await?;
+        let mesh_token = self.mint_mesh_token(ctx).await?;
         let url = self.rpc_url();
         let body = serde_json::to_vec(&envelope)
             .map_err(|e| OrkError::Internal(format!("serialize JSON-RPC envelope: {e}")))?;
@@ -374,7 +436,7 @@ impl A2aRemoteAgent {
             .header("accept", "text/event-stream")
             .header("content-type", "application/json")
             .body(body);
-        let req = self.apply_default_headers(req, ctx, bearer.as_ref());
+        let req = self.apply_default_headers(req, ctx, bearer.as_ref(), mesh_token.as_deref());
 
         let resp = req
             .send()
@@ -456,6 +518,27 @@ fn resolve_tenant_header(card: &AgentCard) -> String {
             })
         })
         .unwrap_or_else(|| "X-Tenant-Id".to_string())
+}
+
+/// ADR-0020 §`Mesh trust`: pull the destination's `accepted_scopes` from
+/// the `mesh-trust` extension. Empty when the card is silent — callers
+/// must treat that as "wide open" via [`intersect_scopes`] (legacy
+/// behaviour for cards that predate the extension).
+fn card_accepted_scopes(card: &AgentCard) -> Vec<String> {
+    let Some(exts) = card.extensions.as_ref() else {
+        return Vec::new();
+    };
+    exts.iter()
+        .find(|ext| ext.uri == EXT_MESH_TRUST)
+        .and_then(|ext| ext.params.as_ref())
+        .and_then(|params| params.get(PARAM_ACCEPTED_SCOPES))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Wrap an event stream so a quiet period longer than `idle` produces an
@@ -626,6 +709,7 @@ mod tests {
             reqwest::Client::new(),
             &cfg,
             kafka,
+            None,
         )
     }
 

@@ -200,6 +200,32 @@ pub struct RedisConfig {
 pub struct AuthConfig {
     pub jwt_secret: String,
     pub token_expiry_hours: u64,
+    /// ADR-0020 §`Mesh trust`: HS256 secret used to sign / verify the
+    /// `X-Ork-Mesh-Token` header on outbound A2A calls. Falls back to
+    /// [`Self::jwt_secret`] when unset for dev parity (single-instance
+    /// deployments where one secret covers both bearer + mesh).
+    #[serde(default)]
+    pub mesh_secret: Option<String>,
+    /// ADR-0020 §`Mesh trust`: `iss` claim stamped onto minted mesh tokens
+    /// and required on inbound verification. Defaults to
+    /// `"ork-mesh"`.
+    #[serde(default = "default_mesh_iss")]
+    pub mesh_issuer: String,
+    /// ADR-0020 §`Mesh trust`: `aud` claim stamped / required. Defaults to
+    /// `"ork-api"`. For multi-instance topologies operators set this to a
+    /// destination-specific name and configure a matching peer-side
+    /// signer; for single-instance default deployments the value is
+    /// shared across all hops.
+    #[serde(default = "default_mesh_aud")]
+    pub mesh_audience: String,
+}
+
+fn default_mesh_iss() -> String {
+    "ork-mesh".to_string()
+}
+
+fn default_mesh_aud() -> String {
+    "ork-api".to_string()
 }
 
 /// ADR 0012 §`Decision`. Operator-side LLM provider catalog plus the global
@@ -437,6 +463,9 @@ impl Default for AppConfig {
             auth: AuthConfig {
                 jwt_secret: "change-me-in-production".into(),
                 token_expiry_hours: 24,
+                mesh_secret: None,
+                mesh_issuer: default_mesh_iss(),
+                mesh_audience: default_mesh_aud(),
             },
             llm: LlmConfig::default(),
             workspace: WorkspaceConfig::default(),

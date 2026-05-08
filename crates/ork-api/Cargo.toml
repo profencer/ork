@@ -23,6 +23,7 @@ ork-llm = { workspace = true }
 # the existing GitHub / GitLab / code / agent_call routes.
 ork-mcp = { workspace = true }
 ork-persistence = { workspace = true }
+ork-security = { workspace = true }
 ork-storage = { workspace = true }
 ork-gateways = { workspace = true }
 ork-webui = { workspace = true }

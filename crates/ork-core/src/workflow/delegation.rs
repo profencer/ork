@@ -19,14 +19,85 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use futures::StreamExt;
-use ork_a2a::{A2aMethod, AgentCallInput, JsonRpcRequest, MessageSendParams, TaskState};
+use ork_a2a::extensions::{EXT_MESH_TRUST, PARAM_ACCEPTS_EXTERNAL_TENANTS};
+use ork_a2a::{A2aMethod, AgentCallInput, AgentCard, JsonRpcRequest, MessageSendParams, TaskState};
+use ork_common::auth::{TENANT_ADMIN_SCOPE, agent_delegate_scope};
 use ork_common::error::OrkError;
+use ork_common::types::TenantId;
 use serde_json::Value;
 
-use crate::a2a::{AgentContext, AgentEvent, AgentMessage};
+use crate::a2a::{AgentContext, AgentEvent, AgentId, AgentMessage};
 use crate::agent_registry::AgentRegistry;
 use crate::ports::a2a_task_repo::{A2aTaskRepository, A2aTaskRow};
 use crate::ports::delegation_publisher::DelegationPublisher;
+
+/// ADR-0020 §`Tenant id propagation across delegation`: enforce
+/// `agent:<target>:delegate` scope on every peer-delegation, plus a
+/// cross-tenant gate (`tenant:admin` OR card carries
+/// `accepts_external_tenants: true`).
+///
+/// Returns `OrkError::Validation` (recoverable per ADR-0010 §`Tool error
+/// semantics`) so the LLM tool loop can react by picking a different
+/// agent rather than failing the whole workflow step.
+pub fn enforce_delegation_policy(
+    parent_ctx: &AgentContext,
+    target_id: &AgentId,
+    target_tenant: TenantId,
+    target_card: &AgentCard,
+) -> Result<(), OrkError> {
+    let needed = agent_delegate_scope(target_id);
+    let scopes = &parent_ctx.caller.scopes;
+    let scope_ok = scopes.iter().any(|s| {
+        s == &needed
+            || s == "*"
+            || matches_wildcard_delegate(s, target_id)
+            || s == TENANT_ADMIN_SCOPE
+    });
+    if !scope_ok {
+        return Err(OrkError::Validation(format!(
+            "delegation rejected: caller is missing scope `{needed}` for target '{target_id}' (ADR-0020)"
+        )));
+    }
+
+    if target_tenant != parent_ctx.tenant_id {
+        let admin = scopes.iter().any(|s| s == TENANT_ADMIN_SCOPE);
+        let accepts_external = card_accepts_external_tenants(target_card);
+        if !admin && !accepts_external {
+            return Err(OrkError::Validation(format!(
+                "cross-tenant delegation to '{target_id}' (target_tenant={target_tenant}) \
+                 rejected: caller lacks `tenant:admin` and the destination card does not declare \
+                 `accepts_external_tenants: true` (ADR-0020 §`Tenant id propagation across delegation`)"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// True when `scope` is a wildcard form (`agent:*:delegate`) that matches
+/// the concrete target. Intentionally conservative — only the `*` segment
+/// in position 2 (the agent id) is treated as a wildcard so callers can't
+/// accidentally grant `tool:*:invoke` agent-delegation rights.
+fn matches_wildcard_delegate(scope: &str, target_id: &AgentId) -> bool {
+    let parts: Vec<&str> = scope.split(':').collect();
+    parts.len() == 3
+        && parts[0] == "agent"
+        && parts[1] == "*"
+        && parts[2] == "delegate"
+        && !target_id.is_empty()
+}
+
+fn card_accepts_external_tenants(card: &AgentCard) -> bool {
+    let Some(exts) = card.extensions.as_ref() else {
+        return false;
+    };
+    exts.iter()
+        .find(|e| e.uri == EXT_MESH_TRUST)
+        .and_then(|e| e.params.as_ref())
+        .and_then(|p| p.get(PARAM_ACCEPTS_EXTERNAL_TENANTS))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
 
 /// Outcome of a one-shot peer delegation. `task_id` is the child A2A task id; for sync
 /// completions `reply` carries the accumulated child message, for fire-and-forget it is
@@ -88,7 +159,20 @@ pub async fn execute_one_shot_delegation(
         )));
     }
 
-    let child_ctx = parent_ctx.child_for_delegation(&target_id)?;
+    // ADR-0006 baseline: same-tenant delegation. ADR-0020 cross-tenant
+    // call sites resolve the target's tenant from its `AgentCard`; today
+    // (registry has no per-card tenant id) every call is same-tenant. The
+    // policy gate below stays load-bearing: it asserts the caller carries
+    // `agent:<target>:delegate` (or wildcard / admin) regardless of the
+    // tenant question.
+    let target_tenant = parent_ctx.tenant_id;
+    let target_card = registry.card_for(&target_id).await.ok_or_else(|| {
+        OrkError::NotFound(format!(
+            "rejected: card unavailable for agent '{target_id}'"
+        ))
+    })?;
+    enforce_delegation_policy(parent_ctx, &target_id, target_tenant, &target_card)?;
+    let child_ctx = parent_ctx.child_for_delegation(&target_id, target_tenant)?;
     let child_task_id = child_ctx.task_id;
     let await_ = target_call.await_;
     let mut child_msg = target_call.into_message();

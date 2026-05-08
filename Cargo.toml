@@ -18,6 +18,7 @@ members = [
     "crates/ork-persistence",
     "crates/ork-common",
     "crates/ork-push",
+    "crates/ork-security",
     "crates/ork-server",
     "crates/ork-storage",
     "crates/ork-webui",
@@ -52,6 +53,7 @@ ork-mcp = { path = "crates/ork-mcp" }
 ork-persistence = { path = "crates/ork-persistence" }
 ork-common = { path = "crates/ork-common" }
 ork-push = { path = "crates/ork-push" }
+ork-security = { path = "crates/ork-security" }
 ork-server = { path = "crates/ork-server" }
 ork-storage = { path = "crates/ork-storage" }
 ork-webui = { path = "crates/ork-webui" }

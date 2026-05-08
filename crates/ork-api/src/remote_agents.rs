@@ -93,6 +93,9 @@ pub fn build_remote_builder(
     // ADR-0016: `Some((store, meta, public_base))` — outbound `Part::File` rewrites for
     // all `A2aRemoteAgent`s from this process-wide builder.
     artifacts: Option<ArtifactA2aWiring>,
+    // ADR-0020: `Some(signer)` enables `X-Ork-Mesh-Token` minting on every
+    // outbound A2A request. `None` keeps legacy / dev behaviour (bearer-only).
+    mesh_signer: Option<Arc<dyn ork_security::MeshTokenSigner>>,
 ) -> Arc<A2aRemoteAgentBuilder> {
     let mut client_cfg = a2a_client_config_from_toml(cfg);
     if let Some((s, m, b)) = artifacts {
@@ -106,6 +109,7 @@ pub fn build_remote_builder(
         A2aAuth::None,
         client_cfg,
         kafka,
+        mesh_signer,
     ))
 }
 

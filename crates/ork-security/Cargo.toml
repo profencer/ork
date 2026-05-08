@@ -1,0 +1,25 @@
+[package]
+name = "ork-security"
+version.workspace = true
+edition.workspace = true
+
+# ADR-0020 §`Mesh trust` — pure types + traits + a default HS256 signer.
+# Hexagonal: NO axum / sqlx / reqwest / rmcp / rskafka here. The wire shape
+# is deliberately consumed by `ork-api` (inbound verify) and
+# `ork-integrations::a2a_client` (outbound mint) without leaking either of
+# their adapter deps back into this crate.
+
+[dependencies]
+ork-common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+jsonwebtoken = { workspace = true }
+secrecy = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

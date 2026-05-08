@@ -199,12 +199,31 @@ async fn main() -> anyhow::Result<()> {
         (Some(s), Some(m)) => Some((s.clone(), m.clone(), artifact_public_base.clone())),
         _ => None,
     };
+    // ADR-0020 §`Mesh trust`: a single `HmacMeshTokenSigner` shared between
+    // outbound (A2aRemoteAgent) and inbound (auth_middleware Phase B4).
+    // `auth.mesh_secret` is preferred; `auth.jwt_secret` is the dev-fallback
+    // so single-instance deployments don't need to rotate two secrets.
+    let mesh_signer: std::sync::Arc<dyn ork_security::MeshTokenSigner> = {
+        let secret = secrecy::SecretString::from(
+            config
+                .auth
+                .mesh_secret
+                .clone()
+                .unwrap_or_else(|| config.auth.jwt_secret.clone()),
+        );
+        std::sync::Arc::new(ork_security::HmacMeshTokenSigner::new(
+            secret,
+            config.auth.mesh_issuer.clone(),
+            config.auth.mesh_audience.clone(),
+        ))
+    };
     let a2a_builder = remote_agents::build_remote_builder(
         http_client.clone(),
         card_cache.clone(),
         &config.a2a_client,
         Some(delegation_publisher.clone()),
         a2a_artifacts,
+        Some(mesh_signer.clone()),
     );
     let remote_builder: Arc<dyn RemoteAgentBuilder> = a2a_builder.clone();
 
@@ -556,6 +575,7 @@ async fn main() -> anyhow::Result<()> {
         app_state,
         gateway_boot.router,
         gateway_boot.protected_router,
+        Some(mesh_signer.clone()),
     );
 
     let addr = format!("{}:{}", config.server.host, config.server.port);

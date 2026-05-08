@@ -29,6 +29,22 @@ use crate::workflow::compiler::{CompiledWorkflow, EdgeCondition, WorkflowNode, c
 use crate::workflow::delegation::{DelegationOutcome, execute_one_shot_delegation};
 use crate::workflow::template::{parse_json_array, resolve_template};
 
+/// ADR-0020 §`Tenant id propagation across delegation`: synthetic
+/// caller identity stamped on workflow-engine-built `AgentContext`s.
+/// The workflow runtime is the system here — the workflow definition
+/// itself was operator-approved, so the engine carries the privileges
+/// the graph declared. Per-user scope-chain propagation across a
+/// workflow run is deferred to a follow-up ADR.
+fn system_runtime_caller(tenant_id: TenantId) -> CallerIdentity {
+    CallerIdentity {
+        tenant_id,
+        user_id: None,
+        scopes: vec!["agent:*:delegate".to_string()],
+        tenant_chain: vec![tenant_id],
+        ..CallerIdentity::default()
+    }
+}
+
 /// Stable cache key used by both [`WorkflowEngine::build_inline_overlay`] and
 /// [`WorkflowEngine::resolve_agent`] so identical inline URLs share one
 /// transient agent within a run.
@@ -524,12 +540,15 @@ impl WorkflowEngine {
             task_id: step_task_id,
             parent_task_id: None,
             cancel: self.run_cancel.child_token(),
-            caller: CallerIdentity {
-                tenant_id,
-                user_id: None,
-                scopes: vec![],
-                ..CallerIdentity::default()
-            },
+            // ADR-0020 §`Tenant id propagation across delegation`: same
+            // doctrine as the `delegate_to:` path below — the workflow
+            // runtime is the system here, so any `agent_call` / `peer_*`
+            // tool the LocalAgent fires off is exercising privileges
+            // the workflow definition was already approved to use. Grant
+            // the wildcard delegate scope so `enforce_delegation_policy`
+            // admits it. Per-user scope-chain propagation across a
+            // workflow run is a follow-up ADR.
+            caller: system_runtime_caller(tenant_id),
             push_notification_url: None,
             trace_ctx: None,
             context_id: None,
@@ -733,12 +752,10 @@ impl WorkflowEngine {
             task_id: delegate_ctx_task_id,
             parent_task_id: parent_run.parent_task_id,
             cancel: self.run_cancel.child_token(),
-            caller: CallerIdentity {
-                tenant_id,
-                user_id: None,
-                scopes: vec![],
-                ..CallerIdentity::default()
-            },
+            // ADR-0020 §`Tenant id propagation across delegation`: same
+            // system-runtime privileges as `execute_agent_step` — see
+            // [`system_runtime_caller`] for the rationale.
+            caller: system_runtime_caller(tenant_id),
             push_notification_url: spec.push_url.clone(),
             trace_ctx: None,
             context_id: None,
