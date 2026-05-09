@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use ork_a2a::{ContextId, TaskId};
+use ork_a2a::{ContextId, ResourceId, TaskId, ThreadId};
 use ork_common::auth::{TrustClass, TrustTier};
 use ork_common::error::OrkError;
 use ork_common::types::{TenantId, UserId};
@@ -86,6 +86,15 @@ pub struct AgentContext {
     /// Public API origin for proxy URLs when `presign_get` is unavailable (same as
     /// [`crate::embeds::EmbedContext::artifact_public_base`]).
     pub artifact_public_base: Option<String>,
+    /// ADR-0053: stable id of the user / org / device that owns this
+    /// thread. When `None`, [`AgentContext::memory_context`] falls back
+    /// to the caller's `user_id` (or [`ResourceId::anonymous`] keyed by
+    /// tenant). Working memory and semantic recall scope to this id.
+    pub resource_id: Option<ResourceId>,
+    /// ADR-0053: id of the current conversation thread. When `None`,
+    /// [`AgentContext::memory_context`] falls back to the A2A
+    /// [`ContextId`] (and finally the [`TaskId`] when both are absent).
+    pub thread_id: Option<ThreadId>,
 }
 
 impl fmt::Debug for AgentContext {
@@ -109,6 +118,8 @@ impl fmt::Debug for AgentContext {
                 &self.artifact_store.as_ref().map(|_| "<set>"),
             )
             .field("artifact_public_base", &self.artifact_public_base)
+            .field("resource_id", &self.resource_id)
+            .field("thread_id", &self.thread_id)
             .finish()
     }
 }
@@ -182,7 +193,38 @@ impl AgentContext {
             step_llm_overrides: None,
             artifact_store: self.artifact_store.clone(),
             artifact_public_base: self.artifact_public_base.clone(),
+            // ADR-0053: a delegated child runs under the same user-facing
+            // resource and conversation thread; both ids propagate.
+            resource_id: self.resource_id,
+            thread_id: self.thread_id,
         })
+    }
+
+    /// ADR-0053: derive a [`MemoryContext`](crate::ports::memory_store::MemoryContext)
+    /// for `agent_id` from this context. The `resource_id` falls back to
+    /// the caller's `user_id` (or [`ResourceId::anonymous`] keyed by
+    /// tenant when no user is present); the `thread_id` falls back to
+    /// the A2A `context_id` (and finally the `task_id`). This is the
+    /// canonical mapping used by `CodeAgent`.
+    #[must_use]
+    pub fn memory_context(&self, agent_id: &AgentId) -> crate::ports::memory_store::MemoryContext {
+        let resource_id = self.resource_id.unwrap_or_else(|| {
+            self.caller
+                .user_id
+                .map(|u| ResourceId(u.0))
+                .unwrap_or_else(|| ResourceId::anonymous(self.tenant_id.0))
+        });
+        let thread_id = self.thread_id.unwrap_or_else(|| {
+            self.context_id
+                .map(ThreadId::from)
+                .unwrap_or_else(|| ThreadId::from(self.task_id))
+        });
+        crate::ports::memory_store::MemoryContext {
+            tenant_id: self.tenant_id,
+            resource_id,
+            thread_id,
+            agent_id: agent_id.clone(),
+        }
     }
 }
 
@@ -216,6 +258,8 @@ mod tests {
             step_llm_overrides: None,
             artifact_store: None,
             artifact_public_base: None,
+            resource_id: None,
+            thread_id: None,
         }
     }
 
@@ -350,6 +394,40 @@ mod tests {
             .child_for_delegation(&"writer".to_string(), tenant)
             .expect("ok");
         assert!(child.step_llm_overrides.is_none());
+    }
+
+    /// ADR-0053: explicit `resource_id` / `thread_id` win; otherwise fall
+    /// back to caller `user_id` and `context_id` (then `task_id`).
+    #[test]
+    fn memory_context_prefers_explicit_then_falls_back() {
+        let tenant = TenantId(Uuid::now_v7());
+        let mut ctx = root_ctx(tenant);
+        let agent = "weather".to_string();
+
+        // No user_id, no context_id → anonymous resource, task-derived thread.
+        let mc = ctx.memory_context(&agent);
+        assert_eq!(mc.tenant_id, tenant);
+        assert_eq!(mc.agent_id, agent);
+        assert_eq!(mc.resource_id, ResourceId::anonymous(tenant.0));
+        assert_eq!(mc.thread_id.0, ctx.task_id.0);
+
+        // user_id populated → resource_id derived from it.
+        let user = ork_common::types::UserId::new();
+        ctx.caller.user_id = Some(user);
+        let cid = ContextId::new();
+        ctx.context_id = Some(cid);
+        let mc = ctx.memory_context(&agent);
+        assert_eq!(mc.resource_id, ResourceId(user.0));
+        assert_eq!(mc.thread_id.0, cid.0);
+
+        // Explicit fields override the fallbacks.
+        let explicit_resource = ResourceId::new();
+        let explicit_thread = ThreadId::new();
+        ctx.resource_id = Some(explicit_resource);
+        ctx.thread_id = Some(explicit_thread);
+        let mc = ctx.memory_context(&agent);
+        assert_eq!(mc.resource_id, explicit_resource);
+        assert_eq!(mc.thread_id, explicit_thread);
     }
 
     #[test]

@@ -283,6 +283,8 @@ impl EventMeshGateway {
             step_llm_overrides: None,
             artifact_store,
             artifact_public_base,
+            resource_id: None,
+            thread_id: None,
         };
         let out = agent.send(ctx, message).await?;
         if let Some(out_topic) = outbound {

@@ -167,6 +167,14 @@ impl OrkAppBuilder {
         let mut agents: HashMap<String, Arc<dyn Agent>> = HashMap::new();
         for agent in self.agents {
             let aid = agent.id().as_str().to_string();
+            // ADR-0053: inject the registered MemoryStore (if any) into
+            // every agent before sealing the registry. Each agent's
+            // `inject_memory` is idempotent and the per-agent
+            // `.memory(...)` override wins, so this is safe regardless
+            // of authoring path.
+            if let Some(memory) = self.memory.as_ref() {
+                agent.inject_memory(memory.clone());
+            }
             if agents.insert(aid.clone(), agent).is_some() {
                 return Err(cfg(format!(
                     "duplicate agent id `{aid}`; ids must be unique within the agents category"

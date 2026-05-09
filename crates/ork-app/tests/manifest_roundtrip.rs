@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use ork_a2a::{AgentCapabilities, AgentCard};
+use ork_a2a::{MessageId, ResourceId};
 use ork_app::OrkApp;
 use ork_app::types::{
     Environment, McpServerSpec, McpTransportStub, ObservabilityConfig, ScorerSpec, ScorerTarget,
     ServerConfig,
 };
 use ork_common::error::OrkError;
-use ork_core::ports::memory_store::MemoryStore;
+use ork_common::types::TenantId;
+use ork_core::ports::llm::ChatMessage;
+use ork_core::ports::memory_store::{MemoryContext, MemoryStore, RecallHit, ThreadSummary};
 use ork_core::ports::tool_def::ToolDef;
 use ork_core::ports::vector_store::VectorStore;
 use ork_core::ports::workflow_def::WorkflowDef;
@@ -119,9 +122,55 @@ fn card(name: &str) -> AgentCard {
 }
 
 struct Mem;
+#[async_trait]
 impl MemoryStore for Mem {
     fn name(&self) -> &str {
         "mem1"
+    }
+    async fn append_message(
+        &self,
+        _ctx: &MemoryContext,
+        _msg: ChatMessage,
+    ) -> Result<MessageId, OrkError> {
+        Ok(MessageId::new())
+    }
+    async fn last_messages(
+        &self,
+        _ctx: &MemoryContext,
+        _limit: usize,
+    ) -> Result<Vec<ChatMessage>, OrkError> {
+        Ok(Vec::new())
+    }
+    async fn working_memory(
+        &self,
+        _ctx: &MemoryContext,
+    ) -> Result<Option<serde_json::Value>, OrkError> {
+        Ok(None)
+    }
+    async fn set_working_memory(
+        &self,
+        _ctx: &MemoryContext,
+        _v: serde_json::Value,
+    ) -> Result<(), OrkError> {
+        Ok(())
+    }
+    async fn semantic_recall(
+        &self,
+        _ctx: &MemoryContext,
+        _query: &str,
+        _top_k: usize,
+    ) -> Result<Vec<RecallHit>, OrkError> {
+        Ok(Vec::new())
+    }
+    async fn list_threads(
+        &self,
+        _tenant_id: TenantId,
+        _resource_id: &ResourceId,
+    ) -> Result<Vec<ThreadSummary>, OrkError> {
+        Ok(Vec::new())
+    }
+    async fn delete_thread(&self, _ctx: &MemoryContext) -> Result<(), OrkError> {
+        Ok(())
     }
 }
 

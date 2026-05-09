@@ -350,6 +350,8 @@ async fn handle(
         step_llm_overrides: None,
         artifact_store: st.artifact_store.clone(),
         artifact_public_base: st.artifact_public_base.clone(),
+        resource_id: None,
+        thread_id: None,
     };
     tokio::spawn(async move {
         if let Err(e) = agent.send(ctx, message).await {

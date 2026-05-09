@@ -97,6 +97,8 @@ impl TranslatedRequest {
             step_llm_overrides: None,
             artifact_store,
             artifact_public_base,
+            resource_id: None,
+            thread_id: None,
         };
         (ctx, self.message)
     }

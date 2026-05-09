@@ -204,6 +204,8 @@ async fn handle_rest(
         step_llm_overrides: None,
         artifact_store: st.artifact_store.clone(),
         artifact_public_base: st.artifact_public_base.clone(),
+        resource_id: None,
+        thread_id: None,
     };
     let out = match agent.send(ctx, message).await {
         Ok(m) => m,

@@ -15,6 +15,7 @@ members = [
     "crates/ork-integrations",
     "crates/ork-llm",
     "crates/ork-mcp",
+    "crates/ork-memory",
     "crates/ork-persistence",
     "crates/ork-common",
     "crates/ork-push",
@@ -50,6 +51,7 @@ ork-gateways = { path = "crates/ork-gateways" }
 ork-integrations = { path = "crates/ork-integrations" }
 ork-llm = { path = "crates/ork-llm" }
 ork-mcp = { path = "crates/ork-mcp" }
+ork-memory = { path = "crates/ork-memory" }
 ork-persistence = { path = "crates/ork-persistence" }
 ork-common = { path = "crates/ork-common" }
 ork-push = { path = "crates/ork-push" }
@@ -76,6 +78,8 @@ jsonschema = "0.26"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+libsql = { version = "0.6", default-features = false, features = ["core", "serde"] }
+pgvector = { version = "0.4", features = ["sqlx"] }
 
 # Redis
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }

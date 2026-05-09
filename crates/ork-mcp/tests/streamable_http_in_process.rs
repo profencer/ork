@@ -50,6 +50,8 @@ fn test_ctx(tenant: TenantId) -> AgentContext {
         step_llm_overrides: None,
         artifact_store: None,
         artifact_public_base: None,
+        resource_id: None,
+        thread_id: None,
     }
 }
 

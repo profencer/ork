@@ -31,6 +31,7 @@ use ork_core::models::agent::{
 };
 use ork_core::ports::agent::{Agent, AgentEventStream};
 use ork_core::ports::llm::{ChatMessage, ChatRequest, LlmProvider};
+use ork_core::ports::memory_store::{MemoryOptions, MemoryStore};
 use ork_core::ports::tool_def::ToolDef;
 use ork_tool::IntoToolDef;
 
@@ -78,9 +79,28 @@ pub struct CodeAgent {
     completion_hooks: Vec<Arc<dyn CompletionHook>>,
     output_schema: Option<serde_json::Value>,
     request_context_schema: Option<serde_json::Value>,
+    /// ADR-0053: optional memory backend. `OrkAppBuilder` injects the
+    /// registered store via [`Agent::inject_memory`] after the agent
+    /// has been wrapped in `Arc`; the field is a [`OnceLock`] so the
+    /// inject-once semantics are explicit.
+    memory: std::sync::OnceLock<Arc<dyn MemoryStore>>,
+    memory_options: MemoryOptions,
 }
 
 impl CodeAgent {
+    /// ADR-0053: read the agent's memory options.
+    #[must_use]
+    pub fn memory_options(&self) -> &MemoryOptions {
+        &self.memory_options
+    }
+
+    /// ADR-0053: returns the wired [`MemoryStore`] when one is present
+    /// (set explicitly via [`CodeAgentBuilder::memory`] or injected at
+    /// `OrkApp::build` time).
+    #[must_use]
+    pub fn memory(&self) -> Option<&Arc<dyn MemoryStore>> {
+        self.memory.get()
+    }
     /// JSON Schema declared via [`CodeAgentBuilder::request_context_schema`].
     /// Consumed by ADR-0056's auto-OpenAPI emitter and ADR-0055 Studio's "send
     /// a message" form. Returns `None` when no schema was set.
@@ -143,6 +163,8 @@ pub struct CodeAgentBuilder {
     request_context_schema: Option<serde_json::Value>,
     card_ctx: Option<CardEnrichmentContext>,
     llm: Option<Arc<dyn LlmProvider>>,
+    memory: Option<Arc<dyn MemoryStore>>,
+    memory_options: Option<MemoryOptions>,
 }
 
 impl CodeAgentBuilder {
@@ -172,6 +194,8 @@ impl CodeAgentBuilder {
             request_context_schema: None,
             card_ctx: None,
             llm: None,
+            memory: None,
+            memory_options: None,
         }
     }
 
@@ -414,6 +438,26 @@ impl CodeAgentBuilder {
         self
     }
 
+    /// ADR-0053: wire a [`MemoryStore`] for this agent. Mutually
+    /// compatible with `OrkAppBuilder::memory(...)` — the per-agent
+    /// override wins. Pass [`MemoryOptions::default()`] for the Mastra
+    /// shape (last 20 messages, recall enabled top-K=6, working
+    /// memory `User`).
+    #[must_use]
+    pub fn memory(mut self, memory: Arc<dyn MemoryStore>) -> Self {
+        self.memory = Some(memory);
+        self
+    }
+
+    /// ADR-0053: per-agent memory options. Setting this without
+    /// [`Self::memory`] is allowed — `OrkAppBuilder` will inject the
+    /// store at build time and these options control how it is used.
+    #[must_use]
+    pub fn memory_options(mut self, options: MemoryOptions) -> Self {
+        self.memory_options = Some(options);
+        self
+    }
+
     /// Validate required fields and produce a [`CodeAgent`].
     ///
     /// Returns [`OrkError::Configuration`] when `id` is empty, or `instructions`,
@@ -496,6 +540,10 @@ impl CodeAgentBuilder {
         let workflow_refs = dedupe_preserve_order(self.workflow_refs);
         let mcp_server_refs = dedupe_preserve_order(self.mcp_server_refs);
 
+        let memory = std::sync::OnceLock::new();
+        if let Some(m) = self.memory {
+            let _ = memory.set(m);
+        }
         Ok(CodeAgent {
             id,
             card,
@@ -512,6 +560,8 @@ impl CodeAgentBuilder {
             completion_hooks: self.completion_hooks,
             output_schema: self.output_schema,
             request_context_schema: self.request_context_schema,
+            memory,
+            memory_options: self.memory_options.unwrap_or_default(),
         })
     }
 }
@@ -554,6 +604,51 @@ impl ToolDef for SubmitTool {
         }
         Ok(serde_json::json!({"ok": true}))
     }
+}
+
+/// ADR-0053: built-in tool injected when memory + working-memory are
+/// both enabled. The LLM calls this with a JSON object that becomes the
+/// agent's working memory snapshot for the next turn / thread.
+struct MemoryUpdateWorkingTool {
+    input_schema: serde_json::Value,
+    output_schema: serde_json::Value,
+    memory: Arc<dyn MemoryStore>,
+    mem_ctx: ork_core::ports::memory_store::MemoryContext,
+}
+
+#[async_trait]
+impl ToolDef for MemoryUpdateWorkingTool {
+    fn id(&self) -> &str {
+        "memory.update_working"
+    }
+    fn description(&self) -> &str {
+        "Update the agent's durable working memory for this user. Pass the \
+         full new state as a JSON object; the previous state is replaced."
+    }
+    fn input_schema(&self) -> &serde_json::Value {
+        &self.input_schema
+    }
+    fn output_schema(&self) -> &serde_json::Value {
+        &self.output_schema
+    }
+    async fn invoke(
+        &self,
+        _ctx: &AgentContext,
+        input: &serde_json::Value,
+    ) -> Result<serde_json::Value, OrkError> {
+        self.memory
+            .set_working_memory(&self.mem_ctx, input.clone())
+            .await?;
+        Ok(serde_json::json!({"ok": true}))
+    }
+}
+
+fn working_memory_input_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "description": "New working-memory state. Replaces the previous snapshot.",
+        "additionalProperties": true,
+    })
 }
 
 fn dedupe_preserve_order(items: Vec<String>) -> Vec<String> {
@@ -609,6 +704,12 @@ impl Agent for CodeAgent {
         &self.mcp_server_refs
     }
 
+    fn inject_memory(&self, memory: Arc<dyn MemoryStore>) {
+        // OnceLock::set returns Err if already set; the per-agent
+        // `.memory(...)` override wins, so we silently ignore that case.
+        let _ = self.memory.set(memory);
+    }
+
     async fn send_stream(
         &self,
         ctx: AgentContext,
@@ -656,6 +757,59 @@ impl Agent for CodeAgent {
         } else {
             None
         };
+
+        // ADR-0053: build the memory preamble (working snapshot,
+        // semantic-recall hits, last-N history) and inject the
+        // synthetic `memory.update_working` tool when memory is wired.
+        let memory_handle = self.memory.get().cloned();
+        let memory_ctx = memory_handle.as_ref().map(|_| ctx.memory_context(&self.id));
+        let mut history_preamble: Vec<ChatMessage> = Vec::new();
+        if let (Some(memory), Some(mctx)) = (memory_handle.as_ref(), memory_ctx.as_ref()) {
+            let opts = &self.memory_options;
+            if opts.include_working
+                && let Some(snapshot) = memory.working_memory(mctx).await?
+            {
+                history_preamble.push(ChatMessage::system(format!(
+                    "[memory.working] {}",
+                    serde_json::to_string(&snapshot).unwrap_or_default()
+                )));
+            }
+            if opts.semantic_recall.enabled {
+                let hits = memory
+                    .semantic_recall(mctx, &user.content, opts.semantic_recall.top_k)
+                    .await?;
+                if !hits.is_empty() {
+                    let lines: Vec<String> = hits
+                        .iter()
+                        .map(|h| format!("- ({:.2}) {}", h.score, h.content))
+                        .collect();
+                    history_preamble.push(ChatMessage::system(format!(
+                        "[memory.recall] Relevant past messages:\n{}",
+                        lines.join("\n")
+                    )));
+                }
+            }
+            if opts.last_messages > 0 {
+                let prior = memory.last_messages(mctx, opts.last_messages).await?;
+                history_preamble.extend(prior);
+            }
+            if opts.include_working {
+                let update_tool = Arc::new(MemoryUpdateWorkingTool {
+                    input_schema: working_memory_input_schema(),
+                    output_schema: serde_json::json!({"type":"object"}),
+                    memory: memory.clone(),
+                    mem_ctx: mctx.clone(),
+                });
+                tools.push(update_tool as Arc<dyn ToolDef>);
+            }
+            // Persist the user message before invoking the engine so the
+            // next turn's `last_messages(...)` includes it. Failure here
+            // is logged but does not block the run — memory is best-effort
+            // observability, not a request-path dependency.
+            if let Err(e) = memory.append_message(mctx, user.clone()).await {
+                tracing::warn!(error = %e, "ADR-0053: failed to persist user message");
+            }
+        }
 
         // Re-derive the visible tool ids in case the dynamic resolver added entries; the
         // value is mostly used for telemetry/manifests, not the rig dispatch path.
@@ -715,7 +869,7 @@ impl Agent for CodeAgent {
                 llm.clone(),
                 tools,
                 user.clone(),
-                vec![],
+                history_preamble,
                 RigEngineHooks {
                     tool: tool_hooks.clone(),
                     completion: completion_hooks.clone(),
@@ -729,6 +883,37 @@ impl Agent for CodeAgent {
                 }
                 Ok(mut inner) => {
                     while let Some(ev) = inner.next().await {
+                        // ADR-0053: persist the assistant turn so the
+                        // next turn's `last_messages(...)` sees a real
+                        // transcript. Best-effort — log and continue if
+                        // the store rejects (matches the user-side
+                        // policy upstream of RigEngine::run).
+                        if let (Ok(AgentEvent::Message(m)), Some(memory), Some(mctx)) =
+                            (&ev, memory_handle.as_ref(), memory_ctx.as_ref())
+                        {
+                            let text = m
+                                .parts
+                                .iter()
+                                .filter_map(|p| match p {
+                                    Part::Text { text, .. } => Some(text.clone()),
+                                    Part::Data { data, .. } => {
+                                        Some(serde_json::to_string(data).unwrap_or_default())
+                                    }
+                                    Part::File { .. } => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("");
+                            if !text.is_empty()
+                                && let Err(e) = memory
+                                    .append_message(mctx, ChatMessage::assistant(text, Vec::new()))
+                                    .await
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    "ADR-0053: failed to persist assistant message"
+                                );
+                            }
+                        }
                         yield ev;
                     }
                 }

@@ -4,5 +4,6 @@
 //! merging lives in [`router`]. Both are constructed from
 //! [`ork_common::config::LlmConfig`].
 
+pub mod embedder;
 pub mod openai_compatible;
 pub mod router;

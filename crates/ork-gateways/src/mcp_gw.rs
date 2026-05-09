@@ -132,6 +132,8 @@ impl OrkMcpServer {
             step_llm_overrides: None,
             artifact_store: self.artifact_store.clone(),
             artifact_public_base: self.artifact_public_base.clone(),
+            resource_id: None,
+            thread_id: None,
         };
         let out = agent.send(ctx, message).await.map_err(map_ork_to_mcp)?;
         let body = response_text(&out);

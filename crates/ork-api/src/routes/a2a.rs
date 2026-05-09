@@ -354,6 +354,8 @@ async fn handle_message_send(
             .artifact_store
             .as_ref()
             .map(|_| state.artifact_public_base.clone()),
+        resource_id: None,
+        thread_id: None,
     };
 
     let result = agent.send(ctx, inbound).await;
@@ -525,6 +527,8 @@ async fn handle_message_stream(
             .artifact_store
             .as_ref()
             .map(|_| state.artifact_public_base.clone()),
+        resource_id: None,
+        thread_id: None,
     };
 
     let id = env.id.clone();
@@ -825,6 +829,8 @@ async fn handle_tasks_cancel(
             step_llm_overrides: None,
             artifact_store: None,
             artifact_public_base: None,
+            resource_id: None,
+            thread_id: None,
         };
         if let Err(e) = agent.cancel(ctx, &params.id).await
             && !matches!(e, ork_common::error::OrkError::Unsupported(_))

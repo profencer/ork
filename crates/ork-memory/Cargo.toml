@@ -1,0 +1,37 @@
+[package]
+name = "ork-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ork-a2a = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+jsonschema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+# Optional backends
+libsql = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+pgvector = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util"] }
+ork-a2a = { workspace = true }
+
+[features]
+default = ["libsql"]
+libsql = ["dep:libsql"]
+postgres = ["dep:sqlx", "dep:pgvector"]

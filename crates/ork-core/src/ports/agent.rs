@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -6,6 +7,7 @@ use futures::stream::Stream;
 use ork_common::error::OrkError;
 
 use crate::a2a::{AgentCard, AgentContext, AgentEvent, AgentId, AgentMessage, TaskId};
+use crate::ports::memory_store::MemoryStore;
 
 pub type AgentEventStream =
     Pin<Box<dyn Stream<Item = Result<AgentEvent, OrkError>> + Send + 'static>>;
@@ -63,4 +65,14 @@ pub trait Agent: Send + Sync {
     fn referenced_mcp_server_ids(&self) -> &[String] {
         &[]
     }
+
+    /// ADR-0053: install the [`MemoryStore`] registered on the parent
+    /// [`OrkApp`](../../../../ork-app/src/app.rs). Default no-op so
+    /// agents that do not consume memory (e.g.
+    /// [`crate::ports::remote_agent_builder`]'s remote agent) compile
+    /// without changes; concrete agents (`CodeAgent`) override and
+    /// store the handle for later use during `send_stream`. Idempotent
+    /// — implementations are expected to use a `OnceLock` or similar so
+    /// repeated calls are absorbed.
+    fn inject_memory(&self, _memory: Arc<dyn MemoryStore>) {}
 }

@@ -571,6 +571,8 @@ impl WorkflowEngine {
             step_llm_overrides,
             artifact_store: self.artifact_store.clone(),
             artifact_public_base: self.artifact_public_base.clone(),
+            resource_id: None,
+            thread_id: None,
         };
 
         // ADR 0006 §`Persistence` / demo `Known engine gaps` regression:
@@ -778,6 +780,8 @@ impl WorkflowEngine {
             step_llm_overrides: None,
             artifact_store: self.artifact_store.clone(),
             artifact_public_base: self.artifact_public_base.clone(),
+            resource_id: None,
+            thread_id: None,
         };
 
         // ADR 0006 §`Persistence` / demo `Known engine gaps` regression:

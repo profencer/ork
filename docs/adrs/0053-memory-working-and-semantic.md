@@ -1,6 +1,6 @@
 # 0053 — Memory: working memory + semantic recall, threads and resources
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -158,12 +158,19 @@ resources within a tenant. Used cautiously; defaults to `Resource`.
 
 ### Embedder selection
 
-`EmbedderSpec::from("openai/text-embedding-3-small")` flows into
-ADR [`0012`](0012-multi-llm-providers.md)'s router — the same
-single-point selection ork already does for chat. Embedding models
-are first-class providers; rig's
+v1 ships a small `Embedder` port in
+[`crates/ork-core/`](../../crates/ork-core/) and a default
+`OpenAiEmbedder` in [`crates/ork-llm/`](../../crates/ork-llm/) that
+reuses the existing OpenAI HTTP client. `Memory` accepts an
+`Arc<dyn Embedder>` directly via the builder
+(`Memory::libsql(...).embedder(Arc::new(OpenAiEmbedder::new(...)))`).
+Routing embedders through ADR
+[`0012`](0012-multi-llm-providers.md)'s `LlmRouter` is deferred to a
+follow-up ADR; the v1 surface is intentionally smaller so the memory
+slice can land independently. rig's
 [`EmbeddingsBuilder`](https://docs.rs/rig-core/latest/rig/embeddings/index.html)
-is what does the work under the hood, but ork owns the routing.
+remains the obvious provider primitive; nothing in this ADR
+precludes a later `OpenAiEmbedder` rewrite that delegates to rig.
 
 ### Integration with `CodeAgent`
 
@@ -192,13 +199,18 @@ LLM can write to working memory. Mastra surfaces this as a
       `ork-core`, `ork-common`, `serde`, `schemars`, `tokio`,
       `futures`, `libsql`. No `axum`/`reqwest`/`rmcp`/`rskafka`.
 - [ ] `MemoryStore` port defined at
-      `crates/ork-core/src/ports/memory.rs` with the surface
-      shown in `Decision`.
+      `crates/ork-core/src/ports/memory_store.rs` (replacing the
+      existing stub) with the surface shown in `Decision`.
+- [ ] `Embedder` port defined alongside `MemoryStore` and consumed
+      by both backends; an `OpenAiEmbedder` implementation ships in
+      [`crates/ork-llm/`](../../crates/ork-llm/).
 - [ ] `Memory::libsql(url) -> MemoryBuilder` exported from
       `crates/ork-memory/src/lib.rs` with the chain shown in
       `Decision`.
 - [ ] `Memory::postgres(pg_pool) -> MemoryBuilder` exported from
-      [`crates/ork-persistence/`](../../crates/ork-persistence/).
+      [`crates/ork-memory/`](../../crates/ork-memory/) under the
+      `postgres` feature (both backends co-located in `ork-memory`
+      to share the trait scaffolding, types, and tests).
 - [ ] Migration `migrations/NNNN_memory_tables.sql` adds
       `mem_messages`, `mem_working`, `mem_embeddings` with the
       indices required for the queries above. pgvector extension
@@ -297,23 +309,34 @@ LLM can write to working memory. Mastra surfaces this as a
 
 ## Affected ork modules
 
-- New: [`crates/ork-memory/`](../../crates/) — libsql backend +
-  port re-export.
-- [`crates/ork-core/src/ports/memory.rs`](../../crates/ork-core/src/)
-  — `MemoryStore` trait.
-- [`crates/ork-persistence/`](../../crates/ork-persistence/) —
-  Postgres backend + pgvector migration.
+- New: [`crates/ork-memory/`](../../crates/) — libsql backend
+  (default) + Postgres backend (`postgres` feature) + port re-export.
+- [`crates/ork-core/src/ports/memory_store.rs`](../../crates/ork-core/src/)
+  — `MemoryStore` trait + `Embedder` port.
 - [`crates/ork-agents/src/code_agent.rs`](../../crates/ork-agents/src/)
   — memory injection + built-in `memory.update_working` tool.
-- [`crates/ork-llm/`](../../crates/ork-llm/) — embedder routing
-  via `LlmRouter` (one-line addition to the resolution chain).
-- [`migrations/`](../../migrations/) — three new tables.
+- [`crates/ork-llm/`](../../crates/ork-llm/) — `OpenAiEmbedder`
+  implementation of the `Embedder` port (reuses existing OpenAI
+  HTTP wiring; full `LlmRouter` integration deferred).
+- [`crates/ork-a2a/src/ids.rs`](../../crates/ork-a2a/src/) —
+  `ResourceId` and `ThreadId` newtypes alongside `MessageId`.
+- [`migrations/`](../../migrations/) — three new tables for the
+  Postgres backend with RLS policies.
 
 ## Reviewer findings
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Major | `mem_working` PK included nullable `agent_id`, contradicting "NULL = shared across agents" comments. Postgres promotes PK columns to `NOT NULL`, so the shared row could not be stored. | Fixed in-session: `agent_id NOT NULL` in both backends + migration; cross-agent shared scope deferred and called out in the trait doc and migration comment. |
+| Major | Assistant turns were not persisted, so `last_messages` returned a one-sided transcript. | Fixed in-session: `CodeAgent::send_stream` intercepts `AgentEvent::Message` and calls `memory.append_message(...)` before yielding. New regression test `last_messages_carries_user_and_assistant_turns` covers the round-trip. |
+| Minor | Postgres read paths used `tx.commit().await.ok()`, swallowing potential connection errors. | Acknowledged, deferred — the analogous pattern in `crates/ork-persistence` lets the tx auto-rollback on drop; a follow-up cleanup ADR can sweep both. |
+| Minor | Memory reads on the request path propagate errors (`?`) while writes are fail-soft. Inconsistent. | Acknowledged, deferred — full fail-soft policy on reads worth its own pass; current reads already return `Ok(None)` / empty Vec for missing rows so the surface area of the inconsistency is narrow. |
+| Minor | Trait doc referenced `WorkingMemoryScope::Resource` / `WorkingMemoryScope::Agent` which are not real types. | Fixed in-session: comment now points at the deferred-mode design and the `Open questions` section. |
+| Minor | Prior-art row still claimed `LlmRouter`-based embedder routing. | Fixed in-session: row updated to "constructor injection; `LlmRouter` integration deferred." |
+| Minor | RFC3339 second-resolution timestamps in libsql could collide on rapid back-to-back inserts, making `last_messages` order non-deterministic. | Acknowledged, deferred — a follow-up can break ties on `message_id` (UUID v7 is sortable). |
+| Nit | `EmbedderSpec::From<S>` falls back silently on a malformed slug. | Acknowledged, deferred — surface only matters once `LlmRouter` integration ships. |
+| Nit | `f32_vec_to_bytes` byte order undocumented. | Fixed in-session: doc comment added pointing at libsql's `F32_BLOB` convention. |
+| Nit | `working_memory_input_schema` is permissive. | Acknowledged, deferred — mirroring `WorkingMemoryShape::Schema` into the tool input schema is a quality-of-life improvement, not a correctness gap (the backend validator catches violations). |
 
 ## Prior art / parity references
 
@@ -322,7 +345,7 @@ LLM can write to working memory. Mastra surfaces this as a
 | Mastra | [Memory overview](https://mastra.ai/docs/memory/overview) | `Memory::libsql` / `Memory::postgres` |
 | Mastra | working memory vs semantic recall | `WorkingMemoryShape` + `SemanticRecallConfig` |
 | Mastra | thread / resource scoping | `ThreadId` / `ResourceId` / `Scope` |
-| rig | [`EmbeddingsBuilder`](https://docs.rs/rig-core/latest/rig/embeddings/index.html) | embedder integration via `LlmRouter` |
+| rig | [`EmbeddingsBuilder`](https://docs.rs/rig-core/latest/rig/embeddings/index.html) | `Embedder` port + constructor injection on `Memory::*` builders; `LlmRouter` integration deferred |
 | LangGraph | `Store` for per-user memory | informative — same shape |
 | Solace Agent Mesh | no first-class memory | n/a |
 
