@@ -326,9 +326,8 @@ fn manifest_roundtrip_with_optionals() {
         .server(ServerConfig {
             host: "0.0.0.0".into(),
             port: 3000,
-            tls: None,
             auth: Some(ork_app::types::AuthConfig { mode: "jwt".into() }),
-            resume_on_startup: false,
+            ..ServerConfig::default()
         })
         .build()
         .expect("build");

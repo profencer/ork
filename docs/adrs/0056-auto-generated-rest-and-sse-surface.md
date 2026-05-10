@@ -1,6 +1,6 @@
 # 0056 — Auto-generated REST + SSE server surface for agents and workflows
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -375,7 +375,30 @@ axum routes go through the same surface.
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Critical | C1 — `router_for` does not mount the existing A2A endpoints (`crates/ork-api/src/routes/a2a.rs`); the legacy router consumes `AppState` (Postgres, Redis, Kafka, push outbox) which `OrkApp` does not own. | Documented seam in `router_for.rs` module docs: deployments needing both surfaces compose `auto.merge(legacy)` in `main.rs` per ADR §`Server adapters`. Full automatic coexistence inside `OrkApp::serve()` is deferred to a follow-up that threads `AppState` through `OrkAppBuilder`. |
+| Critical | C2 — Tenant header could override the JWT-derived tenant without a consistency check, opening a cross-tenant impersonation path. | Fixed in-session: `tenant_middleware` now layers *inside* `auth_middleware` (auth runs first), and rejects `403 forbidden` when `X-Ork-Tenant` differs from `AuthContext::tenant_id` unless the caller holds `tenant:admin` (ADR-0020 §`Tenant CRUD`). |
+| Critical | C3 — Memory routes (`list_threads`, `append_message`, `delete_thread`, `read_working`, `put_working`) skipped scope checks; an authenticated caller could read another resource's working memory. | Fixed in-session: every handler calls `require_scope(parts, &memory_read_scope(&resource))` or `&memory_write_scope(&resource)` per ADR-0021 vocabulary. |
+| Major | M1 — Several routes from the `Decision` block are unimplemented: `/api/workflows/{id}/runs`, `/api/workflows/{id}/runs/{run_id}` (state poll), `/api/workflows/{id}/runs/{run_id}/stream`, `/resume`, `/cancel`, and `/api/memory/threads/{id}/messages` GET. | Acknowledged, deferred. The fire-and-forget `tokio::spawn` in `run_workflow` discards the `WorkflowRunHandle`; full surface needs a per-run snapshot table (ADR-0050 follow-up) before stream/resume/cancel can ship. Tracked as a v1.1 follow-up ADR alongside cursor pagination (open question #3). |
+| Major | M2 — `/swagger-ui` and `/api/openapi.json` were initially gated behind tenant middleware, breaking browser fetch. | Fixed in-session: `router_for` now mounts both on a `docs` sub-router that sits ahead of `tenant_middleware`. |
+| Major | M3 — `static_manifest_path` referenced `AgentSummary` for `/api/manifest`'s response. | Fixed in-session: `AppManifest` schema is hand-registered in `register_dto_schemas` (since `ork_app::AppManifest` does not derive `JsonSchema` to avoid cascading derives into `ork-eval`/`ork-a2a`); `static_manifest_path` references it. |
+| Major | M4 — Middleware order docstring described `auth → tenant`; the implementation actually ran `tenant → auth`. Caused C2. | Fixed in-session in conjunction with C2; module-level docs in `router_for.rs` now describe and justify the `auth → tenant` ordering. |
+| Major | M5 — `idempotency::IdempotencyCache` declared but unused. | Acknowledged, deferred. Wiring `Idempotency-Key` into the three POST handlers (`agents/generate`, `workflows/run`, `tools/invoke`) is straightforward but requires capturing the response body before it leaves the handler — recorded as a v1.1 follow-up. The cache is held available as `pub` so a follow-up can wire it without breaking ABI. |
+| Major | M6 — `ScorerRow.recorded_at` is fabricated at fetch time (`Utc::now()`). | Acknowledged, deferred. Real timestamp requires a new field on `ork_eval::ScoredRow` and propagation through `record`. Follow-up tracked alongside the Postgres-backed sink in ADR-0054 M1. |
+| Major | M7 — `metrics.csv` row missing. | Fixed in-session: row 0056 appended. |
+| Minor | m1 — JSON Schema recompiled per request; ADR §`Negative/costs` mitigation says "compiled once at boot." | Acknowledged, deferred. Cache the compiled `jsonschema::Validator` on `Arc<OrkApp>` at boot. v1 trades the cost for simplicity; the validation is on the request critical path so the optimisation is real. |
+| Minor | m2 — OpenAPI version emitted is `3.0.3`; ADR mentioned `3.1`. | The `openapiv3` crate models 3.0.x only; switching to `oas3` or hand-rolling is out of scope. Documented divergence. |
+| Minor | m3 — `x-ork-gated: true` extension on MCP-fronted tools not implemented. | Acknowledged, deferred. The OpenAPI `Operation::extensions` field carries this; defer to the same follow-up ADR that splits MCP tools from native tools in the manifest. |
+| Minor | m4 — Legacy `auth_middleware` returns `{"error": "..."}` (string), not the unified envelope. | Out of scope: the legacy middleware backs the existing A2A routes (ADR-0008) which have their own error contract. The auto-routes use `ApiError` consistently. Unifying is a follow-up after ADR-0008 stabilises. |
+| Minor | m5 — `validate_request_context` calls `app.manifest()` per request. | Acknowledged, deferred. Cache the schema on `Arc<OrkApp>` at boot alongside m1's compiled validator. |
+| Minor | m6 — `parse_user_message` silently overrides `role` to `User`. | Acknowledged. Comment in code documents the behaviour; a follow-up can `Err(ApiError::validation(...))` on mismatch. |
+| Minor | m7 — Dead code placeholders (`_ensure_status_code_in_scope`, `_unused_run_status`, `const _: &str = TENANT_SELF_SCOPE`). | Fixed in-session where it didn't introduce import churn; remaining placeholders kept to mark imports the missing M1 routes will consume. |
+| Minor | m8 — `read_working`/`put_working` accepted empty `agent` query param. | Fixed in-session: explicit non-empty validation. Same applied to `append_message` `agent_id`. |
+| Minor | m9 — SSE encoder unit tests rely on `format!("{ev:?}")` (axum `Event` Debug shape). | Acknowledged, deferred. Asserting on the wire form requires running the response through axum's body. Tracked. |
+| Nit | n1 — Stale doc comment on `router_for` middleware order. | Fixed in-session as part of C2/M4. |
+| Nit | n2 — `format!("r-{task_id}")` repeated. | Acknowledged. Single-line, low-value extraction. |
+| Nit | n3 — `sse/mod.rs` lacked module-level docs. | Acknowledged. Sub-modules carry the prose; module file is a 4-line re-export. |
+| Nit | n4 — `const _: &str = TENANT_SELF_SCOPE;` keep-alive. | See m7. |
+| Nit | n5 — README index row not yet flipped to Accepted. | Fixed in this commit. |
 
 ## Prior art / parity references
 

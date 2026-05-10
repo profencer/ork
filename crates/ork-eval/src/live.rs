@@ -94,6 +94,14 @@ impl LiveSamplerHandle {
 #[async_trait::async_trait]
 pub trait ScorerResultSink: Send + Sync {
     async fn record(&self, row: ScoredRow);
+    /// ADR-0056: `GET /api/scorer-results` reads recent rows. Default
+    /// returns empty so existing impls (e.g. fire-and-forget Kafka
+    /// sinks) need not change. The in-memory sink overrides this for
+    /// dev / test introspection; the Postgres-backed sink owned by
+    /// ADR-0054's M1 follow-up will provide the real query.
+    async fn list_recent(&self, _limit: usize) -> Vec<ScoredRow> {
+        Vec::new()
+    }
 }
 
 /// A scored result destined for `scorer_results` (persistence) and
@@ -195,6 +203,16 @@ impl ScorerResultSink for InMemoryScorerResultSink {
         if let Ok(mut g) = self.rows.lock() {
             g.push(row);
         }
+    }
+
+    async fn list_recent(&self, limit: usize) -> Vec<ScoredRow> {
+        let g = match self.rows.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let take = limit.min(g.len());
+        let start = g.len().saturating_sub(take);
+        g[start..].iter().rev().cloned().collect()
     }
 }
 

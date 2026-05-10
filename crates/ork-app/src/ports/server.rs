@@ -1,4 +1,6 @@
-//! Hexagonal HTTP server stub (ADR 0056 expands this surface).
+//! Hexagonal HTTP server port (ADR 0056). The auto-generated REST + SSE
+//! surface lives in `ork-api`; the adapter (`ork_server::AxumServer`)
+//! consumes [`crate::OrkApp`] and `config` to build that router.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -8,12 +10,15 @@ use async_trait::async_trait;
 use ork_common::error::OrkError;
 use tokio::sync::oneshot;
 
+use crate::OrkApp;
 use crate::types::ServerConfig;
 
 #[async_trait]
 pub trait Server: Send + Sync {
-    /// Starts listening using `config` (host/port); returns once sockets accept.
-    async fn start(&self, config: Arc<ServerConfig>) -> Result<ServeHandle, OrkError>;
+    /// Starts listening using `config` (host/port). The adapter walks
+    /// `app.manifest()` (and the live registry on `app`) to materialise
+    /// the routes per ADR-0056.
+    async fn start(&self, app: OrkApp, config: Arc<ServerConfig>) -> Result<ServeHandle, OrkError>;
 }
 
 /// Handle returned by [`Server::start`]: local address plus graceful shutdown within 5s.

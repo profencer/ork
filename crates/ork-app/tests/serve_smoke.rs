@@ -15,9 +15,7 @@ async fn healthz_then_shutdown_under_five_seconds() {
         .server(ServerConfig {
             host: "127.0.0.1".into(),
             port: 0,
-            tls: None,
-            auth: None,
-            resume_on_startup: false,
+            ..ServerConfig::default()
         })
         .serve_backend(Arc::new(AxumServer))
         .build()

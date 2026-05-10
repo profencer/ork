@@ -14,6 +14,10 @@ path = "src/main.rs"
 ork-common = { workspace = true }
 ork-core = { workspace = true }
 ork-agents = { workspace = true }
+# ADR-0049 + ADR-0056: walk the central registry to materialise REST routes.
+ork-app = { workspace = true }
+ork-eval = { workspace = true }
+ork-workflow = { workspace = true }
 ork-eventing = { workspace = true }
 ork-a2a = { workspace = true }
 ork-integrations = { workspace = true }
@@ -51,6 +55,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+# ADR-0056: OpenAPI emission + per-DTO JSON Schemas + body validation.
+schemars = { workspace = true }
+jsonschema = { workspace = true }
+openapiv3 = { workspace = true }
+indexmap = { workspace = true }
+tokio-stream = { workspace = true }
 
 [dev-dependencies]
 ork-webui = { workspace = true }

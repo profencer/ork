@@ -1,5 +1,6 @@
 pub mod a2a;
 pub mod artifacts;
+pub mod auto;
 pub mod health;
 pub mod jwks;
 pub mod tenants;

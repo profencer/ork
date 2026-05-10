@@ -161,9 +161,7 @@ fn build_lists_agents_workflows_tools_in_manifest() {
         .server(ServerConfig {
             host: "127.0.0.1".into(),
             port: 0,
-            tls: None,
-            auth: None,
-            resume_on_startup: false,
+            ..ServerConfig::default()
         })
         .build()
         .expect("build ok");

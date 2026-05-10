@@ -36,6 +36,19 @@ pub struct ServerConfig {
     /// When true, [`crate::OrkApp::serve`] replays pending workflow snapshots (ADR-0050).
     #[serde(default)]
     pub resume_on_startup: bool,
+    /// Mount `/swagger-ui` against the auto-generated `/api/openapi.json` (ADR-0056).
+    /// Defaults to `true`; production deployments can flip it off via
+    /// [`crate::OrkAppBuilder::server`] after constructing a [`Self::production`].
+    #[serde(default = "default_swagger_ui")]
+    pub swagger_ui: bool,
+    /// Header name carrying the explicit caller tenant (ADR-0020).
+    /// `400` is returned when missing unless [`Self::default_tenant`] is set.
+    #[serde(default)]
+    pub default_tenant: Option<String>,
+}
+
+fn default_swagger_ui() -> bool {
+    true
 }
 
 impl Default for ServerConfig {
@@ -46,6 +59,24 @@ impl Default for ServerConfig {
             tls: None,
             auth: None,
             resume_on_startup: false,
+            swagger_ui: true,
+            default_tenant: None,
+        }
+    }
+}
+
+impl ServerConfig {
+    /// Convenience: production defaults — bind 0.0.0.0:8080, `/swagger-ui` off.
+    #[must_use]
+    pub fn production() -> Self {
+        Self {
+            host: "0.0.0.0".into(),
+            port: 8080,
+            tls: None,
+            auth: None,
+            resume_on_startup: true,
+            swagger_ui: false,
+            default_tenant: None,
         }
     }
 }

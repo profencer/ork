@@ -3219,6 +3219,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "openapiv3"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c8d427828b22ae1fff2833a03d8486c2c881367f1c336349f307f321e7f4d05"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "openssl"
 version = "0.10.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3337,12 +3348,17 @@ dependencies = [
  "chrono",
  "futures",
  "http-body-util",
+ "indexmap 2.14.0",
+ "jsonschema",
  "jsonwebtoken",
+ "openapiv3",
  "ork-a2a",
  "ork-agents",
+ "ork-app",
  "ork-cache",
  "ork-common",
  "ork-core",
+ "ork-eval",
  "ork-eventing",
  "ork-gateways",
  "ork-integrations",
@@ -3353,13 +3369,16 @@ dependencies = [
  "ork-security",
  "ork-storage",
  "ork-webui",
+ "ork-workflow",
  "redis",
  "reqwest 0.12.28",
+ "schemars 0.8.22",
  "secrecy",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tower",
  "tower-http",
@@ -3744,6 +3763,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "ork-api",
  "ork-app",
  "ork-common",
  "tokio",

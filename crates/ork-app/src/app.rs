@@ -140,6 +140,19 @@ impl OrkApp {
         }
     }
 
+    /// ADR-0056 §`Manifest hot-swap`: stubbed pending ADR-0057. The
+    /// auto-generated routes capture an `Arc<OrkApp>`; an in-flight
+    /// connection therefore holds the *old* registry until it
+    /// completes. A real hot-swap needs an atomic `Arc<ArcSwap<OrkApp>>`
+    /// behind every handler plus rules for draining mid-stream
+    /// agent runs — both owned by ADR-0057.
+    pub fn reload(&self, _new_app: OrkApp) -> Result<(), OrkError> {
+        tracing::warn!("OrkApp::reload is a stub pending ADR-0057; no router-swap performed");
+        Err(OrkError::Internal(
+            "OrkApp::reload is unimplemented; full hot-swap semantics ship with ADR-0057".into(),
+        ))
+    }
+
     pub async fn serve(&self) -> Result<ServeHandle, OrkError> {
         self.resume_pending_workflows_on_startup().await;
         self.spawn_cron_scheduler_if_needed();
@@ -151,7 +164,7 @@ impl OrkApp {
             }
         })?;
         backend
-            .start(Arc::new(self.inner.server_config.clone()))
+            .start(self.clone(), Arc::new(self.inner.server_config.clone()))
             .await
     }
 
