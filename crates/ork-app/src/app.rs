@@ -140,20 +140,38 @@ impl OrkApp {
         }
     }
 
-    /// ADR-0056 §`Manifest hot-swap`: stubbed pending ADR-0057. The
-    /// auto-generated routes capture an `Arc<OrkApp>`; an in-flight
-    /// connection therefore holds the *old* registry until it
-    /// completes. A real hot-swap needs an atomic `Arc<ArcSwap<OrkApp>>`
-    /// behind every handler plus rules for draining mid-stream
-    /// agent runs — both owned by ADR-0057.
+    /// ADR-0056 §`Manifest hot-swap`: stubbed. ADR-0057 v1 ships hot
+    /// reload as **binary restart** (not in-process patching), so this
+    /// stub is no longer load-bearing for `ork dev`. A real hot-swap
+    /// (`Arc<ArcSwap<OrkApp>>` behind every handler + drain rules for
+    /// mid-stream agent runs) is deferred to the dev-server reverse-
+    /// proxy follow-up ADR; that ADR is also the one that earns back the
+    /// "rebuilding…" SSE event ADR-0057's AC #10 originally demanded.
     pub fn reload(&self, _new_app: OrkApp) -> Result<(), OrkError> {
-        tracing::warn!("OrkApp::reload is a stub pending ADR-0057; no router-swap performed");
+        tracing::warn!(
+            "OrkApp::reload is a stub; ADR-0057 v1 uses binary restart. Real hot-swap deferred."
+        );
         Err(OrkError::Internal(
-            "OrkApp::reload is unimplemented; full hot-swap semantics ship with ADR-0057".into(),
+            "OrkApp::reload is unimplemented; ADR-0057 v1 uses binary restart for hot reload"
+                .into(),
         ))
     }
 
     pub async fn serve(&self) -> Result<ServeHandle, OrkError> {
+        // ADR-0057 §`--ork-inspect-manifest`: every ork binary supports the
+        // manifest-inspection early-exit so `ork inspect <bin>` works
+        // without each composition root opting in. Print to stdout so the
+        // CLI can parse the JSON; the init template configures
+        // tracing-subscriber to write to stderr to keep stdout clean.
+        if Self::should_inspect_manifest() {
+            let manifest = self.manifest();
+            let json = serde_json::to_string_pretty(&manifest).map_err(|e| {
+                OrkError::Internal(format!("ork-app: serialise manifest for inspect: {e}"))
+            })?;
+            println!("{json}");
+            return Ok(ServeHandle::inspect_only());
+        }
+
         self.resume_pending_workflows_on_startup().await;
         self.spawn_cron_scheduler_if_needed();
 
@@ -166,6 +184,15 @@ impl OrkApp {
         backend
             .start(self.clone(), Arc::new(self.inner.server_config.clone()))
             .await
+    }
+
+    /// ADR-0057: namespaced flag *or* env var (the env var is the durable
+    /// promise — it works even when the user binary's clap parser rejects
+    /// unknown flags). `ork inspect <binary>` sets `ORK_INSPECT_MANIFEST=1`
+    /// when spawning.
+    fn should_inspect_manifest() -> bool {
+        std::env::args().any(|a| a == "--ork-inspect-manifest")
+            || std::env::var_os("ORK_INSPECT_MANIFEST").is_some()
     }
 
     async fn resume_pending_workflows_on_startup(&self) {

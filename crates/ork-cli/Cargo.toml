@@ -3,12 +3,30 @@ name = "ork-cli"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "ork_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ork"
 path = "src/main.rs"
 
+# ADR-0057 smoke-test fixtures: tiny OrkApp binaries used by
+# `crates/ork-cli/tests/{inspect,build}_smoke.rs` to exercise the
+# `--ork-inspect-manifest` contract end-to-end. Examples (rather than
+# `[[bin]]`) so they can pull `ork-server` from `[dev-dependencies]`
+# without bloating the dep graph of the user-facing `ork` binary.
+[[example]]
+name = "ork-inspect-fixture"
+path = "tests/fixtures/inspect_fixture.rs"
+
+[[example]]
+name = "ork-build-fixture"
+path = "tests/fixtures/build_fixture.rs"
+
 [dependencies]
 ork-agents = { workspace = true }
+ork-app = { workspace = true }
 ork-common = { workspace = true }
 ork-core = { workspace = true }
 ork-eval = { workspace = true }
@@ -27,3 +45,19 @@ serde_yaml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true }
+include_dir = { workspace = true }
+
+# ADR-0057 dev-loop CLI
+notify-debouncer-mini = { workspace = true }
+cargo_metadata = { workspace = true }
+which = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
+[dev-dependencies]
+ork-server = { workspace = true }
+tempfile = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }

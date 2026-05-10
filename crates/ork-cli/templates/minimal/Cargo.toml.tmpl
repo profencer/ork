@@ -1,0 +1,19 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "{{name}}"
+path = "src/main.rs"
+
+# `ork dev` discovers this binary via the `ork.bin` metadata key. Add more
+# binaries to the workspace and point this at the one `ork dev` should run.
+[package.metadata.ork]
+bin = "{{name}}"
+
+[dependencies]
+ork-app = { {{ork_dep}} }
+ork-server = { {{ork_dep_server}} }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

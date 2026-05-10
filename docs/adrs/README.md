@@ -160,7 +160,7 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0054](0054-live-scorers-and-eval-corpus.md) | Live scorers and offline eval corpus | Implemented | 4 |
 | [0055](0055-studio-local-dev-ui.md) | Studio: local dev UI for chat, workflows, memory, traces, scorers | Proposed | 4 |
 | [0056](0056-auto-generated-rest-and-sse-surface.md) | Auto-generated REST + SSE server surface for agents and workflows | Accepted | 4 |
-| [0057](0057-ork-cli-dev-build-start.md) | `ork dev` / `ork build` / `ork start` CLI | Proposed | 4 |
+| [0057](0057-ork-cli-dev-build-start.md) | `ork dev` / `ork build` / `ork start` CLI | Accepted | 4 |
 | [0058](0058-per-tenant-orkapp.md) | Per-tenant `OrkApp` and tenant-scoped catalog overlays | Proposed | 4 |
 | [0059](0059-declarative-workflow-wire-format.md) | Declarative workflow wire format, dynamic registration, and Rust loader | Proposed | 4 |
 | [0060](0060-ork-sdk-generate-and-reference-sdks.md) | `ork sdk generate` and reference TS / Go workflow SDKs | Proposed | 4 |

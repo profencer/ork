@@ -1,6 +1,6 @@
 # 0057 — `ork dev` / `ork build` / `ork start` CLI
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -389,7 +389,24 @@ the new platform shape.
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Major (M1) | `ork dev`'s rebuild path spawned the new child on `args.port` *before* the old child terminated, racing the bind and letting `await_ready` mistakenly succeed on the still-serving old process. | Fixed in-session (`crates/ork-cli/src/dev/mod.rs`): refactored to `Option<AppChild>`; old child is `terminate()`d first, then the new child is spawned. Failure to spawn falls back to "no current child" so the next file change retries. |
+| Major (M2) | `cargo build` subprocess in `ork dev` had no `kill_on_drop`; SIGINT during a build left a stray cargo process holding `target/.cargo-lock`. | Fixed in-session: `cmd.kill_on_drop(true)` added in `crates/ork-cli/src/dev/builder.rs`. |
+| Minor (m2) | `ork init <name>` accepted `..`, absolute paths, and characters that broke the `{{name}}` substitution into `Cargo.toml` and `main.rs`. | Fixed in-session: `validate_project_name` in `crates/ork-cli/src/init/mod.rs` enforces ASCII-letter-leading, alphanumeric+`-`+`_` only, ≤ 64 chars. |
+| Minor (m3) | `discovery::package_depends_on_ork_app` followed dev/build dep edges, risking false-positive matches against fixture-only `ork-app` deps. | Fixed in-session: filter on `DependencyKind::Normal` in `crates/ork-cli/src/dev/discovery.rs`. |
+| Nit (n2) | Asymmetric `&self` vs `&mut self` receiver on `AppChild::send_terminate_signal` across cfgs (Unix vs Windows). | Fixed in-session: both arms take `&mut self` in `crates/ork-cli/src/dev/child.rs`. |
+| Nit (n4) | `OrkApp::reload` docstring claimed the real impl was "owned by ADR-0057" — misleading now that 0057 ships with reload still stubbed. | Fixed in-session: docstring updated in `crates/ork-app/src/app.rs` to point at the dev-server reverse-proxy follow-up ADR. |
+| Nit (n5) | `serve_inspect_only_probe.rs` and `tests/fixtures/{inspect,build}_fixture.rs` would silently corrupt smoke-test stdout if a future builder gained a `tracing::warn!`. | Fixed in-session: `tracing_subscriber::fmt().with_writer(std::io::stderr).try_init()` added defensively. |
+| Note (deferred) | `OrkApp::reload` stays a stub (returns `Err`); v1 hot reload is binary restart per ADR §`ork dev`. | Deferred to the dev-server reverse-proxy follow-up ADR (which also resurrects AC #10's "rebuilding…" SSE event). |
+| Scope (deferred) | AC #10 ("rebuilding…" SSE event on `/api/agents/:id/stream`) is infeasible from a binary that's mid-restart. | Deferred to ADR-0055 (Studio) implementation; Studio's reconnect logic must already handle dropped streams from any cause (crash, deploy, network). The reverse-proxy follow-up earns back synthesised events. |
+| Scope (deferred) | `ork lint` and `ork migrate` ship as clap-visible stubs that exit 2 with a heads-up. | Each warrants its own ADR (rule taxonomy for `lint`; cross-database / migration ownership / testcontainers CI for `migrate`). |
+| Scope (deferred) | `ork build` does not invoke `pnpm build` for Studio; prints a heads-up when the user binary depends on `ork-webui` or future `ork-studio`. | Lands with ADR-0055 (the `ork-studio` crate). v1 of 0057 ships the verb shape; bundle build is one of 0055's acceptance criteria. |
+| Minor (m1, deferred) | `await_ready` cannot distinguish old vs new child on the shared port. | Largely subsumed by the M1 fix (terminate-first removes the contended window); residual hardening (PID-stamped readyz response) belongs with the reverse-proxy follow-up. |
+| Minor (m4, deferred) | `ork inspect <url>` omits `X-Ork-Tenant`; tenant-strict deployments surface a confusing 400. | Deferred. Either a `--tenant` flag on `ork inspect` or a server-side carve-out for `/api/manifest` (probably the right answer; warrants its own ADR touching ADR-0020). |
+| Minor (m5, deferred) | Global `--verbose` flag is honoured only by `ork legacy ...` arms. | Deferred; tracking improvement to thread through the new verbs via `tracing` env-filter once we know which verbs benefit. |
+| Minor (m6, deferred) | The `--ork-inspect-manifest` flag form is undeliverable through user clap parsers; `ORK_INSPECT_MANIFEST=1` is the durable contract. | Acknowledged. Both forms ship; CLI uses the env var. Documentation (ADR §`--ork-inspect-manifest` and the README the follow-up will add) should call out that the flag is belt-and-braces. |
+| Minor (m7, deferred) | `ork build` and `ork inspect` round-trip the manifest JSON through `serde_json::Value` to re-pretty-print. | Deferred; cosmetic perf. The path-spawn case could write `output.stdout` straight to disk after a one-shot `from_slice` validation. |
+| Nit (n1, deferred) | `ServeHandle::inspect_only().local_addr` is `0.0.0.0:0` (wildcard) rather than `127.0.0.1:0`. | Deferred. Consumers should consult `is_inspect_only()` first; the minimal template does. A future change could expose `local_addr()` returning `Option<SocketAddr>`. |
+| Nit (n3, deferred) | `ork init` (without `--ork-source`) writes `git = "https://github.com/your-org/ork"` placeholder URL. | Deferred until ork crates are published to a registry; the in-band warning + README note are the v1 mitigation. |
 
 ## Prior art / parity references
 

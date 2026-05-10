@@ -24,6 +24,20 @@ pub struct AuthConfig {
     pub mode: String,
 }
 
+/// Studio (ADR-0055) mount intent. v1 (ADR-0057) ships the gate only;
+/// the `Enabled` arm is reserved for the follow-up ADR that adds the
+/// actual `crates/ork-studio/` crate and the `--features
+/// ork-webui/embed-spa` bundle build that `ork build` will eventually
+/// drive. Today both arms are no-ops in the auto router; the field
+/// exists so `ork start` and `ork dev` can plumb the user's intent.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StudioConfig {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
 /// HTTP listen + TLS + auth intent for the auto-generated server (ADR 0056).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -45,6 +59,10 @@ pub struct ServerConfig {
     /// `400` is returned when missing unless [`Self::default_tenant`] is set.
     #[serde(default)]
     pub default_tenant: Option<String>,
+    /// Studio (ADR-0055) mount gate. ADR-0057 wires the field through
+    /// `ork dev`/`ork start`; the bundle and panel API land later.
+    #[serde(default)]
+    pub studio: StudioConfig,
 }
 
 fn default_swagger_ui() -> bool {
@@ -61,12 +79,14 @@ impl Default for ServerConfig {
             resume_on_startup: false,
             swagger_ui: true,
             default_tenant: None,
+            studio: StudioConfig::default(),
         }
     }
 }
 
 impl ServerConfig {
-    /// Convenience: production defaults — bind 0.0.0.0:8080, `/swagger-ui` off.
+    /// Convenience: production defaults — bind 0.0.0.0:8080, `/swagger-ui` off,
+    /// Studio off (ADR-0057 §`ork start`).
     #[must_use]
     pub fn production() -> Self {
         Self {
@@ -77,6 +97,7 @@ impl ServerConfig {
             resume_on_startup: true,
             swagger_ui: false,
             default_tenant: None,
+            studio: StudioConfig::Disabled,
         }
     }
 }

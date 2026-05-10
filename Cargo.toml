@@ -197,3 +197,11 @@ proptest = "1"
 # heavier docker-backed run.
 testcontainers = "0.23"
 
+# ADR-0057 dev-loop CLI
+notify-debouncer-mini = "0.4"
+cargo_metadata = "0.18"
+which = "6"
+nix = { version = "0.29", features = ["signal"] }
+assert_cmd = "2"
+predicates = "3"
+

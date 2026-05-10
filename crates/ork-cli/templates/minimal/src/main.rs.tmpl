@@ -1,0 +1,58 @@
+use std::sync::Arc;
+
+use ork_app::OrkApp;
+use ork_app::types::ServerConfig;
+use ork_server::AxumServer;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // tracing → stderr keeps stdout clean for `--ork-inspect-manifest`.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let server_cfg = build_server_config();
+
+    let app = OrkApp::builder()
+        .server(server_cfg)
+        .serve_backend(Arc::new(AxumServer))
+        .build()?;
+
+    let handle = app.serve().await?;
+    if handle.is_inspect_only() {
+        // `OrkApp::serve` printed the manifest and returned an inspect-only
+        // handle; nothing else to do.
+        return Ok(());
+    }
+
+    eprintln!("{{name}} is listening on http://{}", handle.local_addr);
+    handle.wait_for_shutdown_signal().await?;
+    Ok(())
+}
+
+/// Honours the env-var contract documented in ADR-0057:
+/// - `ORK_PRODUCTION=1`         → production posture (Studio off, swagger off, resume_on_startup).
+/// - `ORK_DISABLE_STUDIO=1`     → force Studio off even outside production mode.
+/// - `PORT=<u16>`               → listen port (default 4111).
+fn build_server_config() -> ServerConfig {
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(4111);
+
+    let mut cfg = if std::env::var("ORK_PRODUCTION").is_ok() {
+        ServerConfig::production()
+    } else {
+        ServerConfig::default()
+    };
+    cfg.port = port;
+
+    if std::env::var("ORK_DISABLE_STUDIO").is_ok() {
+        cfg.studio = ork_app::types::StudioConfig::Disabled;
+    }
+    cfg
+}
