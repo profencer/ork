@@ -163,6 +163,10 @@ pub(crate) struct OrkToolDyn {
     pub(crate) semaphore: Arc<Semaphore>,
     pub(crate) max_tool_result_bytes: usize,
     pub(crate) hooks: Vec<Arc<dyn crate::hooks::ToolHook>>,
+    /// ADR-0054 trace capture for live scoring. Populated when the
+    /// agent has any [`crate::hooks::RunCompleteHook`] registered;
+    /// `None` otherwise so unscored agents pay no extra work.
+    pub(crate) trace: Option<ork_core::ports::scorer::TraceCaptureHandle>,
 }
 
 impl ToolDyn for OrkToolDyn {
@@ -192,6 +196,7 @@ impl ToolDyn for OrkToolDyn {
         let fatal = self.fatal.clone();
         let max = self.max_tool_result_bytes;
         let hooks = self.hooks.clone();
+        let trace = self.trace.clone();
 
         Box::pin(async move {
             let call_name = tool.id().to_string();
@@ -280,7 +285,26 @@ impl ToolDyn for OrkToolDyn {
                 ))));
             }
 
+            let invocation_started = std::time::Instant::now();
             let invocation = tool.invoke(&ctx, &parsed).await;
+            let invocation_ms = invocation_started.elapsed().as_millis() as u64;
+            // ADR-0054: record the call into the live-scoring trace
+            // when one is attached. Cloning `parsed` and the ok-side
+            // `Value` is cheap because tool result spillover already
+            // truncates oversized payloads via `max_tool_result_bytes`.
+            if let Some(tc) = trace.as_ref() {
+                let (result_value, error_str) = match &invocation {
+                    Ok(v) => (v.clone(), None),
+                    Err(e) => (serde_json::Value::Null, Some(e.to_string())),
+                };
+                tc.record_tool_call(
+                    call_name.clone(),
+                    parsed.clone(),
+                    result_value,
+                    invocation_ms,
+                    error_str,
+                );
+            }
             for h in &hooks {
                 h.after(&ctx, &descriptor, &invocation).await;
             }
@@ -670,6 +694,8 @@ pub(crate) type OutputSlot = Arc<std::sync::Mutex<Option<serde_json::Value>>>;
 pub(crate) struct RigEngineHooks {
     pub(crate) tool: Vec<Arc<dyn crate::hooks::ToolHook>>,
     pub(crate) completion: Vec<Arc<dyn crate::hooks::CompletionHook>>,
+    /// ADR-0054 richer post-run hook with assembled trace.
+    pub(crate) run_complete: Vec<Arc<dyn crate::hooks::RunCompleteHook>>,
     pub(crate) extractor_slot: Option<OutputSlot>,
 }
 
@@ -686,13 +712,26 @@ impl RigEngine {
         if config.max_tool_iterations == 0 {
             let (tx, rx) = mpsc::channel::<Result<AgentEvent, OrkError>>(4);
             let task_id = ctx.task_id;
+            // ADR-0054: even on this early-out path, fire RunCompleteHook
+            // so `Sampling::OnError` sees the tool_loop_exceeded failure.
+            let run_complete_hooks = hooks.run_complete.clone();
+            let user_message_text = chat_message_text(&prompt);
+            let ctx_for_hooks = ctx.clone();
             tokio::spawn(async move {
                 let _ = tx
                     .send(Ok(status_update_text(task_id, "tool loop exceeded", false)))
                     .await;
-                let _ = tx
-                    .send(Err(OrkError::Workflow("tool_loop_exceeded".into())))
-                    .await;
+                let err = OrkError::Workflow("tool_loop_exceeded".into());
+                fire_run_complete_hooks(
+                    &run_complete_hooks,
+                    None,
+                    &ctx_for_hooks,
+                    &user_message_text,
+                    "",
+                    Some(&err),
+                )
+                .await;
+                let _ = tx.send(Err(err)).await;
             });
             return Ok(Box::pin(ReceiverStream::new(rx)));
         }
@@ -716,6 +755,18 @@ impl RigEngine {
         let fatal = FatalSlot::new();
         let semaphore = Arc::new(Semaphore::new(config.max_parallel_tool_calls.max(1)));
 
+        // ADR-0054 §`Hook surface extensions`: only allocate the trace
+        // capture when a `RunCompleteHook` is registered. Unscored
+        // agents pay nothing.
+        let trace_handle = if hooks.run_complete.is_empty() {
+            None
+        } else {
+            let user_text = chat_message_text(&prompt);
+            Some(ork_core::ports::scorer::TraceCaptureHandle::new(
+                ork_core::ports::scorer::TraceCapture::start(user_text),
+            ))
+        };
+
         let mut rig_tools = Vec::<Box<dyn ToolDyn>>::new();
         for def in tool_defs {
             rig_tools.push(Box::new(OrkToolDyn {
@@ -725,6 +776,7 @@ impl RigEngine {
                 semaphore: semaphore.clone(),
                 max_tool_result_bytes: config.max_tool_result_bytes,
                 hooks: hooks.tool.clone(),
+                trace: trace_handle.clone(),
             }));
         }
 
@@ -733,6 +785,7 @@ impl RigEngine {
             hist.push(chat_message_to_rig(m)?);
         }
 
+        let user_message_text = chat_message_text(&prompt);
         let user_prompt_message = chat_message_to_rig(prompt)?;
         let max_turn = config.max_tool_iterations;
         let cancel = ctx.cancel.clone();
@@ -756,6 +809,7 @@ impl RigEngine {
         let (tx, rx) = mpsc::channel::<Result<AgentEvent, OrkError>>(128);
         let agent_id_line = config.id.clone();
         let completion_hooks = hooks.completion.clone();
+        let run_complete_hooks = hooks.run_complete.clone();
         let extractor_slot = hooks.extractor_slot.clone();
         let ctx_for_hooks = ctx.clone();
         tokio::spawn(run_rig_consumer(
@@ -768,6 +822,9 @@ impl RigEngine {
             expose,
             agent_id_line,
             completion_hooks,
+            run_complete_hooks,
+            trace_handle,
+            user_message_text,
             ctx_for_hooks,
             extractor_slot,
         ));
@@ -787,6 +844,9 @@ async fn run_rig_consumer(
     expose_reasoning: bool,
     agent_id: String,
     completion_hooks: Vec<Arc<dyn crate::hooks::CompletionHook>>,
+    run_complete_hooks: Vec<Arc<dyn crate::hooks::RunCompleteHook>>,
+    trace_handle: Option<ork_core::ports::scorer::TraceCaptureHandle>,
+    user_message_text: String,
     ctx_for_hooks: AgentContext,
     extractor_slot: Option<OutputSlot>,
 ) {
@@ -798,6 +858,18 @@ async fn run_rig_consumer(
                     Some(msg) => OrkError::Workflow(msg),
                     None => OrkError::Workflow("agent task cancelled".into()),
                 };
+                // ADR-0054: surface the failure to RunCompleteHook
+                // before the stream closes so the live sampler sees
+                // every run regardless of outcome.
+                fire_run_complete_hooks(
+                    &run_complete_hooks,
+                    trace_handle.as_ref(),
+                    &ctx_for_hooks,
+                    &user_message_text,
+                    "",
+                    Some(&err),
+                )
+                .await;
                 let _ = tx.send(Err(err)).await;
                 break;
             }
@@ -850,11 +922,30 @@ async fn run_rig_consumer(
                                 Some(msg) => OrkError::Workflow(msg),
                                 None => OrkError::Workflow("agent task cancelled".into()),
                             };
+                            fire_run_complete_hooks(
+                                &run_complete_hooks,
+                                trace_handle.as_ref(),
+                                &ctx_for_hooks,
+                                &user_message_text,
+                                "",
+                                Some(&err),
+                            )
+                            .await;
                             let _ = tx.send(Err(err)).await;
                             break;
                         }
                         if let Some(msg) = fatal.take() {
-                            let _ = tx.send(Err(OrkError::Workflow(msg))).await;
+                            let err = OrkError::Workflow(msg);
+                            fire_run_complete_hooks(
+                                &run_complete_hooks,
+                                trace_handle.as_ref(),
+                                &ctx_for_hooks,
+                                &user_message_text,
+                                "",
+                                Some(&err),
+                            )
+                            .await;
+                            let _ = tx.send(Err(err)).await;
                             break;
                         }
                         info!(
@@ -870,6 +961,18 @@ async fn run_rig_consumer(
                         for h in &completion_hooks {
                             h.on_completion(&ctx_for_hooks, &txt).await;
                         }
+                        // ADR-0054 §`Hook surface extensions`: fire the
+                        // richer run-complete hooks. Trace is None when
+                        // no live scorer is attached (zero-cost path).
+                        fire_run_complete_hooks(
+                            &run_complete_hooks,
+                            trace_handle.as_ref(),
+                            &ctx_for_hooks,
+                            &user_message_text,
+                            &txt,
+                            None,
+                        )
+                        .await;
                         // ADR-0052 §`Structured output via rig::Extractor` — when a
                         // synthetic `submit` tool was injected, prefer its captured
                         // value over the LLM's free-form text.
@@ -901,7 +1004,20 @@ async fn run_rig_consumer(
                     }
                     Ok(_) => {}
                     Err(stream_err) => {
-                        handle_stream_err(stream_err, &fatal, &tx, task_id).await;
+                        let err = handle_stream_err(stream_err, &fatal, &tx, task_id).await;
+                        // ADR-0054: surface every error path to RunCompleteHook
+                        // so `Sampling::OnError` covers `tool_loop_exceeded`,
+                        // tool/completion/prompt failures, and the rest.
+                        fire_run_complete_hooks(
+                            &run_complete_hooks,
+                            trace_handle.as_ref(),
+                            &ctx_for_hooks,
+                            &user_message_text,
+                            "",
+                            Some(&err),
+                        )
+                        .await;
+                        let _ = tx.send(Err(err)).await;
                         break;
                     }
                 }
@@ -910,35 +1026,33 @@ async fn run_rig_consumer(
     }
 }
 
+/// Decide what `OrkError` a streaming failure maps to and emit any
+/// pre-error status frames the caller wants the consumer to see. The
+/// returned error is **not** sent — `run_rig_consumer` does that itself
+/// after firing `RunCompleteHook` (ADR-0054 §`Hook surface extensions`).
 async fn handle_stream_err(
     e: StreamingError,
     fatal: &FatalSlot,
     tx: &mpsc::Sender<Result<AgentEvent, OrkError>>,
     task_id: ork_a2a::TaskId,
-) {
+) -> OrkError {
     match e {
         StreamingError::Prompt(boxed_p) => match &*boxed_p {
             RigPromptError::MaxTurnsError { .. } => {
                 let _ = tx
                     .send(Ok(status_update_text(task_id, "tool loop exceeded", false)))
                     .await;
-                let _ = tx
-                    .send(Err(OrkError::Workflow("tool_loop_exceeded".into())))
-                    .await;
+                OrkError::Workflow("tool_loop_exceeded".into())
             }
             _ => {
                 if let Some(tool_msg) = fatal.take() {
-                    let _ = tx.send(Err(OrkError::Workflow(tool_msg))).await;
+                    OrkError::Workflow(tool_msg)
                 } else {
-                    let _ = tx
-                        .send(Err(OrkError::LlmProvider(boxed_p.to_string())))
-                        .await;
+                    OrkError::LlmProvider(boxed_p.to_string())
                 }
             }
         },
-        other => {
-            let _ = tx.send(Err(stream_other_to_ork(other))).await;
-        }
+        other => stream_other_to_ork(other),
     }
 }
 
@@ -947,5 +1061,51 @@ fn stream_other_to_ork(other: StreamingError) -> OrkError {
         StreamingError::Completion(c) => OrkError::LlmProvider(c.to_string()),
         StreamingError::Tool(t) => OrkError::Workflow(t.to_string()),
         StreamingError::Prompt(p) => OrkError::LlmProvider(p.to_string()),
+    }
+}
+
+/// ADR-0054: extract the user-visible text from a [`ChatMessage`].
+/// Concatenates `content` with any `Text` parts; non-text parts are
+/// elided (file/data parts have no plaintext form). The result is
+/// passed to `RunCompleteHook::on_run_complete` so scorers can quote
+/// the originating message verbatim.
+fn chat_message_text(msg: &ChatMessage) -> String {
+    let mut out = msg.content.clone();
+    for p in &msg.parts {
+        if let Part::Text { text, .. } = p {
+            if !out.is_empty() && !text.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+/// ADR-0054: fan-out helper for `RunCompleteHook` invocations. Takes
+/// an immutable trace snapshot once and reuses it across hooks.
+async fn fire_run_complete_hooks(
+    hooks: &[Arc<dyn crate::hooks::RunCompleteHook>],
+    trace: Option<&ork_core::ports::scorer::TraceCaptureHandle>,
+    ctx: &AgentContext,
+    user_message: &str,
+    final_text: &str,
+    error: Option<&OrkError>,
+) {
+    if hooks.is_empty() {
+        return;
+    }
+    let snapshot = match trace {
+        Some(t) => t.snapshot(),
+        None => ork_core::ports::scorer::Trace {
+            user_message: user_message.to_string(),
+            tool_calls: Vec::new(),
+            started_at: chrono::Utc::now(),
+            completed_at: chrono::Utc::now(),
+        },
+    };
+    for h in hooks {
+        h.on_run_complete(ctx, user_message, final_text, &snapshot, error)
+            .await;
     }
 }

@@ -72,24 +72,20 @@ impl Default for McpServerSpec {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ScorerTarget {
-    Agent { id: String },
-    Workflow { id: String },
-}
+// ADR-0054: rich scorer registration types live in `ork-eval`. They
+// are re-exported here so `OrkAppBuilder::scorer(...)` callers do not
+// need to import `ork-eval` directly when they are not authoring
+// scorers themselves.
+pub use ork_eval::{ScorerSpec, ScorerTarget};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScorerSpec {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Runtime binding stored in [`crate::OrkApp`]: the `(target, spec)`
+/// pair produced by [`crate::OrkAppBuilder::scorer`]. Owns the
+/// `Arc<dyn Scorer>` (via `spec`), so this struct is **not**
+/// `Serialize` — the manifest summary lives in [`crate::manifest`].
+#[derive(Clone)]
 pub struct ScorerBinding {
     pub target: ScorerTarget,
-    pub scorer: ScorerSpec,
+    pub spec: ScorerSpec,
 }
 
 /// Placeholder until ADR 0058 observability ships.

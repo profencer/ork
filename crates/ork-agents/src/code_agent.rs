@@ -35,7 +35,7 @@ use ork_core::ports::memory_store::{MemoryOptions, MemoryStore};
 use ork_core::ports::tool_def::ToolDef;
 use ork_tool::IntoToolDef;
 
-use crate::hooks::{CompletionHook, ToolHook};
+use crate::hooks::{CompletionHook, RunCompleteHook, ToolHook};
 use crate::instruction_spec::InstructionSpec;
 use crate::model_spec::ModelSpec;
 use crate::rig_engine::{OutputSlot, RigEngine, RigEngineHooks};
@@ -77,6 +77,13 @@ pub struct CodeAgent {
     dyn_tools: Option<DynamicToolsFn>,
     tool_hooks: Vec<Arc<dyn ToolHook>>,
     completion_hooks: Vec<Arc<dyn CompletionHook>>,
+    /// ADR-0054 §`Hook surface extensions`: richer post-run hook
+    /// receiving the assembled trace and any fatal error.
+    /// `Mutex` (not `Vec`) so `OrkApp::build()` can append the
+    /// live-sampling hook after the agent is sealed in an `Arc<dyn
+    /// Agent>` via [`Agent::inject_run_complete_hook`]. Cloned at
+    /// run start before any await (no async lock contention).
+    run_complete_hooks: std::sync::Mutex<Vec<Arc<dyn RunCompleteHook>>>,
     output_schema: Option<serde_json::Value>,
     request_context_schema: Option<serde_json::Value>,
     /// ADR-0053: optional memory backend. `OrkAppBuilder` injects the
@@ -159,6 +166,7 @@ pub struct CodeAgentBuilder {
     dyn_tools: Option<DynamicToolsFn>,
     tool_hooks: Vec<Arc<dyn ToolHook>>,
     completion_hooks: Vec<Arc<dyn CompletionHook>>,
+    run_complete_hooks: Vec<Arc<dyn RunCompleteHook>>,
     output_schema: Option<serde_json::Value>,
     request_context_schema: Option<serde_json::Value>,
     card_ctx: Option<CardEnrichmentContext>,
@@ -190,6 +198,7 @@ impl CodeAgentBuilder {
             dyn_tools: None,
             tool_hooks: Vec::new(),
             completion_hooks: Vec::new(),
+            run_complete_hooks: Vec::new(),
             output_schema: None,
             request_context_schema: None,
             card_ctx: None,
@@ -390,6 +399,25 @@ impl CodeAgentBuilder {
         self
     }
 
+    /// ADR-0054 §`Hook surface extensions`: attach a richer post-run
+    /// hook that receives the assembled trace and any fatal error.
+    /// Multiple hooks fire in registration order, after every
+    /// [`CompletionHook`].
+    #[must_use]
+    pub fn on_run_complete<H: RunCompleteHook + 'static>(mut self, h: H) -> Self {
+        self.run_complete_hooks.push(Arc::new(h));
+        self
+    }
+
+    /// ADR-0054: type-erased version of [`Self::on_run_complete`] for
+    /// callers that hold their hook in `Arc<dyn ...>` form (the
+    /// runtime injection path used by `OrkAppBuilder`).
+    #[must_use]
+    pub fn on_run_complete_dyn(mut self, h: Arc<dyn RunCompleteHook>) -> Self {
+        self.run_complete_hooks.push(h);
+        self
+    }
+
     /// Reference an MCP server registered on the same [`OrkApp`](ork_app::OrkApp).
     /// Validated at `OrkApp::build()`. Runtime expansion of MCP-derived tools is
     /// a follow-up — Phase 2 captures the dependency for cross-ref checking only.
@@ -558,6 +586,7 @@ impl CodeAgentBuilder {
             dyn_tools: self.dyn_tools,
             tool_hooks: self.tool_hooks,
             completion_hooks: self.completion_hooks,
+            run_complete_hooks: std::sync::Mutex::new(self.run_complete_hooks),
             output_schema: self.output_schema,
             request_context_schema: self.request_context_schema,
             memory,
@@ -710,6 +739,16 @@ impl Agent for CodeAgent {
         let _ = self.memory.set(memory);
     }
 
+    fn inject_run_complete_hook(&self, hook: Arc<dyn RunCompleteHook>) {
+        // ADR-0054 §`Hook surface extensions`: append the live-
+        // scoring hook installed by `OrkApp::build()`. Lock is
+        // synchronous (`std::sync::Mutex`) and held only for the
+        // push; never held across an await.
+        if let Ok(mut g) = self.run_complete_hooks.lock() {
+            g.push(hook);
+        }
+    }
+
     async fn send_stream(
         &self,
         ctx: AgentContext,
@@ -818,6 +857,14 @@ impl Agent for CodeAgent {
         let llm = self.llm.clone();
         let tool_hooks = self.tool_hooks.clone();
         let completion_hooks = self.completion_hooks.clone();
+        // ADR-0054: snapshot the current hook list under the Mutex
+        // before yielding so `OrkApp::build()` can keep appending
+        // hooks after the agent is `Arc`-wrapped.
+        let run_complete_hooks = self
+            .run_complete_hooks
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         let resolve_ctx = ResolveContext {
             tenant_id: ctx.tenant_id,
         };
@@ -873,6 +920,7 @@ impl Agent for CodeAgent {
                 RigEngineHooks {
                     tool: tool_hooks.clone(),
                     completion: completion_hooks.clone(),
+                    run_complete: run_complete_hooks.clone(),
                     extractor_slot: extractor_slot.clone(),
                 },
             )

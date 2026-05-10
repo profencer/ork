@@ -1,0 +1,36 @@
+[package]
+name = "ork-eval"
+version.workspace = true
+edition.workspace = true
+
+# ADR-0054 forbids axum / reqwest / rmcp / rskafka in this crate.
+# Enforced by `crates/ork-eval/tests/boundaries.rs`.
+
+[dependencies]
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+ork-agents = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+prometheus-client = { workspace = true }
+glob = { workspace = true }
+fastrand = { workspace = true }
+regex = "1"
+jsonschema = { workspace = true }
+# ADR-0054 reviewer M2: judge scorers route through `LlmProvider`
+# rather than `rig::Extractor` (see Reviewer findings note in
+# `docs/adrs/0054-live-scorers-and-eval-corpus.md`). The `rig-core`
+# dep was therefore dropped — it was unused.
+
+[dev-dependencies]
+tempfile = { workspace = true }

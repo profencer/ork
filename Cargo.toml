@@ -23,6 +23,7 @@ members = [
     "crates/ork-server",
     "crates/ork-storage",
     "crates/ork-webui",
+    "crates/ork-eval",
 ]
 exclude = [
     "demo/peer-agent",
@@ -60,6 +61,7 @@ ork-server = { path = "crates/ork-server" }
 ork-storage = { path = "crates/ork-storage" }
 ork-webui = { path = "crates/ork-webui" }
 ork-workflow = { path = "crates/ork-workflow" }
+ork-eval = { path = "crates/ork-eval" }
 
 # Web framework
 axum = "0.8"
@@ -117,6 +119,15 @@ rig-core = { version = "0.36", default-features = false }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# Metrics (ADR-0054 scorer_dropped_total; ADR-0058 will broaden usage)
+prometheus-client = "0.22"
+
+# Glob matching (ADR-0054 ScorerTarget::Wildcard)
+glob = "0.3"
+
+# Random sampling (ADR-0054 Sampling::Ratio)
+fastrand = "2"
 
 # Scheduling
 cron = "0.15"

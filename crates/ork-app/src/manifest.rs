@@ -148,8 +148,8 @@ pub(crate) fn build_manifest(inner: &OrkAppInner) -> AppManifest {
         .map(|b| ScorerSummary {
             target: serde_json::to_value(&b.target)
                 .expect("ScorerTarget must serialize into manifest JSON snapshot"),
-            scorer_id: b.scorer.id.clone(),
-            scorer_label: b.scorer.label.clone(),
+            scorer_id: b.spec.scorer().id().to_string(),
+            scorer_label: None,
         })
         .collect();
 

@@ -74,6 +74,40 @@ impl OrkApp {
         self.inner.id_generator.as_ref()
     }
 
+    /// Registered scorer bindings (ADR-0054). Consumed by the live
+    /// scoring hooks at run time and by the offline `OrkEval` runner.
+    #[must_use]
+    pub fn scorers(&self) -> &[crate::types::ScorerBinding] {
+        &self.inner.scorers
+    }
+
+    /// ADR-0054: producer side of the live-scoring worker. `None`
+    /// when no `Live`/`Both` binding is registered. Studio (ADR-0055)
+    /// reads `metrics()` for backpressure dashboards; integrators
+    /// driving `Agent::run` themselves can pull this handle to
+    /// short-circuit if the worker is unavailable.
+    #[must_use]
+    pub fn live_sampler(&self) -> Option<&ork_eval::LiveSamplerHandle> {
+        self.inner.live_sampler.as_ref()
+    }
+
+    /// ADR-0054: scorer metric handles (`scorer_dropped_total`,
+    /// `scorer_processed_total`, `scorer_failed_total`,
+    /// `scorer_worker_closed_total`). Always present so consumers
+    /// can register them in their global Prometheus registry.
+    #[must_use]
+    pub fn scorer_metrics(&self) -> Arc<ork_eval::ScorerMetrics> {
+        Arc::clone(&self.inner.scorer_metrics)
+    }
+
+    /// ADR-0054: durable sink the live worker writes through. v1 default
+    /// is in-memory; production deployments override via
+    /// [`crate::OrkAppBuilder::scorer_sink`].
+    #[must_use]
+    pub fn scorer_sink(&self) -> Arc<dyn ork_eval::ScorerResultSink> {
+        Arc::clone(&self.inner.scorer_sink)
+    }
+
     pub fn agent_cards(&self) -> impl Iterator<Item = &ork_core::a2a::AgentCard> + '_ {
         let mut ids: Vec<_> = self.inner.agents.keys().cloned().collect();
         ids.sort();

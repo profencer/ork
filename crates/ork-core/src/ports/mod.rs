@@ -14,6 +14,7 @@ pub mod llm;
 pub mod memory_store;
 pub mod remote_agent_builder;
 pub mod repository;
+pub mod scorer;
 pub mod tool_def;
 pub mod vector_store;
 pub mod webui_project_repo;

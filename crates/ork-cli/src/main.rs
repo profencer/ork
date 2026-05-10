@@ -1,3 +1,5 @@
+mod eval;
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
@@ -92,6 +94,8 @@ enum Commands {
         #[command(subcommand)]
         cmd: WebuiCommand,
     },
+    /// Run an offline scorer eval (ADR-0054).
+    Eval(eval::EvalArgs),
 }
 
 #[derive(Subcommand)]
@@ -178,6 +182,9 @@ async fn main() -> Result<()> {
                 run_webui_dev(vite_port).await?;
             }
         },
+        Commands::Eval(args) => {
+            eval::run(args).await?;
+        }
     }
 
     Ok(())

@@ -16,6 +16,9 @@ use ork_core::ports::tool_def::ToolDef;
 use ork_core::ports::vector_store::VectorStore;
 use ork_core::ports::workflow_def::WorkflowDef;
 use ork_core::ports::workflow_snapshot::WorkflowSnapshotStore;
+use ork_eval::agent_hook::{LiveAgentScoringHook, LiveBinding};
+use ork_eval::live::{InMemoryScorerResultSink, ScorerResultSink, spawn_worker};
+use ork_eval::metrics::ScorerMetrics;
 use ork_tool::IntoToolDef;
 use ork_workflow::ProgramOp;
 use serde_json::Value;
@@ -36,7 +39,7 @@ fn cfg(message: impl Into<String>) -> OrkError {
 }
 
 /// Builder that registers deployment components prior to [`OrkApp`] construction.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct OrkAppBuilder {
     agents: Vec<Arc<dyn Agent>>,
     workflows: Vec<Arc<dyn WorkflowDef>>,
@@ -58,6 +61,9 @@ pub struct OrkAppBuilder {
     /// Required when any registered workflow has a cron trigger.
     system_tenant_id: Option<TenantId>,
     environment: Environment,
+    /// ADR-0054: optional custom sink. Defaults to in-memory at
+    /// `build()` time when unset.
+    scorer_sink: Option<Arc<dyn ScorerResultSink>>,
 }
 
 impl OrkAppBuilder {
@@ -114,8 +120,11 @@ impl OrkAppBuilder {
         self
     }
 
-    pub fn scorer(mut self, target: ScorerTarget, scorer: ScorerSpec) -> Self {
-        self.scorers.push(ScorerBinding { target, scorer });
+    /// Register a scorer attached to `target` with the supplied
+    /// `spec`. Live, offline, or both — see `ScorerSpec` and
+    /// [ADR-0054](../../docs/adrs/0054-live-scorers-and-eval-corpus.md).
+    pub fn scorer(mut self, target: ScorerTarget, spec: ScorerSpec) -> Self {
+        self.scorers.push(ScorerBinding { target, spec });
         self
     }
 
@@ -157,6 +166,17 @@ impl OrkAppBuilder {
     #[must_use]
     pub fn system_tenant(mut self, tenant: TenantId) -> Self {
         self.system_tenant_id = Some(tenant);
+        self
+    }
+
+    /// ADR-0054: install a custom [`ScorerResultSink`] for live
+    /// scoring. Default v1 is `InMemoryScorerResultSink` so the
+    /// worker is observable end-to-end; production deployments
+    /// targeting Postgres pass a sink backed by `ork-persistence`
+    /// once ADR-0054's M1 follow-up lands.
+    #[must_use]
+    pub fn scorer_sink(mut self, sink: Arc<dyn ScorerResultSink>) -> Self {
+        self.scorer_sink = Some(sink);
         self
     }
 
@@ -280,24 +300,77 @@ impl OrkAppBuilder {
         }
 
         for binding in &self.scorers {
-            let target_id = match &binding.target {
-                ScorerTarget::Agent { id } | ScorerTarget::Workflow { id } => id,
-            };
-            validate_id(target_id)?;
             match &binding.target {
                 ScorerTarget::Agent { id } => {
+                    validate_id(id)?;
                     if !agents.contains_key(id) {
                         return Err(cfg(format!("scorer binds to unknown agent `{id}`")));
                     }
                 }
                 ScorerTarget::Workflow { id } => {
+                    validate_id(id)?;
                     if !workflows.contains_key(id) {
                         return Err(cfg(format!("scorer binds to unknown workflow `{id}`")));
                     }
                 }
+                ScorerTarget::AgentEverywhere => {}
+                ScorerTarget::Wildcard { pattern } => {
+                    glob::Pattern::new(pattern).map_err(|e| {
+                        cfg(format!(
+                            "scorer wildcard `{pattern}` is not a valid glob pattern: {e}"
+                        ))
+                    })?;
+                }
             }
-            validate_id(&binding.scorer.id)?;
         }
+
+        // ADR-0054 §`Live sampling`: spin up the live-scoring worker
+        // and inject `LiveAgentScoringHook` into every agent that
+        // matches at least one `Live`/`Both` binding. Done **before**
+        // sealing `OrkAppInner` so user-facing callers of
+        // `OrkApp::run_agent` see hooks already attached on the very
+        // first run.
+        let scorer_metrics = ScorerMetrics::new();
+        let scorer_sink: Arc<dyn ScorerResultSink> = self
+            .scorer_sink
+            .unwrap_or_else(|| Arc::new(InMemoryScorerResultSink::new()));
+        let live_bindings: Vec<&ScorerBinding> = self
+            .scorers
+            .iter()
+            .filter(|b| b.spec.fires_live())
+            .collect();
+        let live_sampler = if live_bindings.is_empty() {
+            None
+        } else {
+            let handle = spawn_worker(
+                Arc::clone(&scorer_sink),
+                Arc::clone(&scorer_metrics),
+                ork_eval::live::DEFAULT_QUEUE_CAPACITY,
+            );
+            for (agent_id, agent) in &agents {
+                let matches: Vec<LiveBinding> = live_bindings
+                    .iter()
+                    .filter(|b| b.target.matches_agent(agent_id))
+                    .map(|b| LiveBinding::new(b.target.clone(), b.spec.clone()))
+                    .collect();
+                if matches.is_empty() {
+                    continue;
+                }
+                let hook = Arc::new(LiveAgentScoringHook::new(
+                    agent_id.clone(),
+                    matches,
+                    handle.clone(),
+                ));
+                agent.inject_run_complete_hook(hook);
+            }
+            // Workflow-target bindings do not yet have a workflow-level
+            // RunCompleteHook surface in this ADR; flagged in the ADR's
+            // Reviewer findings as `Acknowledged, deferred` to a
+            // workflow-engine follow-up. Live workflow scoring will
+            // fire through the same `LiveSamplerHandle` once that
+            // hook lands.
+            Some(handle)
+        };
 
         let built_at = Utc::now();
         let agent_registry = Arc::new(AgentRegistry::from_agents(agents.values().cloned()));
@@ -313,6 +386,9 @@ impl OrkAppBuilder {
             storage: self.storage,
             vectors: self.vectors,
             scorers: self.scorers,
+            live_sampler,
+            scorer_metrics,
+            scorer_sink,
             observability: self.observability,
             server_config: self.server_config,
             request_context_schema: self.request_context_schema,

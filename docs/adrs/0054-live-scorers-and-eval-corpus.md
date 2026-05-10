@@ -1,6 +1,6 @@
 # 0054 — Live scorers and offline eval corpus
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -366,7 +366,25 @@ unify because the Rust trait surface is identical.
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Critical | C1 — `OrkApp::build()` did not spawn the live worker or attach `LiveAgentScoringHook` to matching agents; `OrkApp::scorers()` was a holding cell only. | **Fixed in-session.** `OrkAppBuilder::build()` now spins up `spawn_worker(...)` once when at least one `Live`/`Both` binding exists and calls `agent.inject_run_complete_hook(...)` on every agent whose id matches a binding's target. New `Agent::inject_run_complete_hook` default no-op port in `ork-core`; `CodeAgent` overrides via `Mutex<Vec<...>>`. |
+| Major | M1 — No Postgres-backed `ScorerResultSink`; `scorer_results` table would stay empty at runtime. | **Acknowledged, deferred.** v1 ships `InMemoryScorerResultSink` as the default sink so the worker is observable end-to-end (Studio panels and the live test gate read through it). The Postgres-backed sink lands as a follow-up driven by ADR-0058 (per-tenant overlay) which already requires the sqlx pool plumbing this would share. `OrkAppBuilder::scorer_sink(Arc<dyn ScorerResultSink>)` accepts a custom sink today. |
+| Major | M2 — ADR text and `Reviewer findings` did not record the `rig::Extractor<M, JudgeOutput>` → `LlmProviderJudge` substitution; `rig-core` dep in `ork-eval/Cargo.toml` was unused. | **Fixed in-session.** Substitution recorded in this row; `LlmProviderJudge` (`crates/ork-eval/src/scorers/llm_judge.rs`) preserves the typed `(score, rationale)` contract while routing through `LlmProvider` so judge calls inherit `LlmRouter` tenant overrides + cost accounting. `rig-core` dep dropped from `ork-eval/Cargo.toml`. |
+| Major | M3 — Fatal-error paths in `rig_engine` (`max_tool_iterations == 0`, `MaxTurnsError`, `Tool`/`Completion`/`Prompt` stream errors) skipped `RunCompleteHook` so `Sampling::OnError` under-fired. | **Fixed in-session.** `RigEngine::run` early-out path and `handle_stream_err` now both fire `RunCompleteHook` before the consumer emits the `Err`. `handle_stream_err` was refactored to return the `OrkError` it would emit so the caller can fire hooks first. |
+| Major | M4 — Required `tests/scorers/answer_relevancy.rs` integration test was missing; the judge scorer was only covered by `tests/judge_model_smoke.rs`. | **Fixed in-session.** Added `crates/ork-eval/tests/scorers/answer_relevancy.rs` with three tests: judge-output passthrough, `judge_model(...)` override, and `try_build` error contract. |
+| Major | M5 — `ScoredRow` lacked `judge_model` / `judge_input_tokens` / `judge_output_tokens`; columns existed in the migration but were never written. | **Fixed in-session.** Added explicit fields to `ScoredRow`; live worker extracts them from `ScoreCard.details` via `extract_judge_metadata`. `Judge` trait return type evolved to `JudgeResponse { output, usage: JudgeUsage { prompt_tokens, completion_tokens } }`; `LlmProviderJudge` populates from `ChatResponse.usage`; the three judge scorers (relevancy/faithfulness/toxicity) now stamp `judge_input_tokens`/`judge_output_tokens` into `details`. |
+| Minor | m1 — `Scorer::score` takes `&ScoreInput<'_>` (borrow), ADR shows owned `ScoreInput`. | **Acknowledged, kept borrow.** Borrowing avoids cloning `Trace` per scorer when several attach to one run; documented here. |
+| Minor | m2 — `cost_under` returns `score = 0.0` with `label = "unknown"` when no cost is reported, which the runner counts as a failure. | **Acknowledged, deferred.** Module doc comment flags the limitation; production cost telemetry lands with ADR-0058. The label is distinct so a downstream regression detector can ignore `unknown` rows. |
+| Minor | m3 — `LiveSamplerHandle::try_enqueue` collapsed `Closed` and `Full` into the same counter. | **Fixed in-session.** Added `scorer_worker_closed_total` Prometheus counter; closed-channel drops increment it instead of `scorer_dropped_total`. |
+| Minor | m4 — `user_facing_latency_unchanged_within_5ms` test compares means over 50 iterations, prone to scheduler-jitter flake. | **Acknowledged, deferred.** Test left as-is for v1; a 1000-iter / p99 variant lands with the perf-CI follow-up. |
+| Minor | m5 — `Sampling::Ratio` wasted an RNG draw at `rate = 0.0` / `1.0`. | **Fixed in-session.** Short-circuit before the draw. |
+| Minor | m6 — Judge builders panicked when `.judge(...)` was missing. | **Fixed in-session.** Added `try_build()` returning `OrkError::Configuration`; `build()` retained as the panic-on-misuse alias used by tests + the ADR's example. |
+| Minor | m7 — `.judge_model("openai/gpt-4o-mini")` was a no-op stub on the three judge builders. | **Fixed in-session.** Override stored on the scorer struct and surfaced as `details.judge_model` (and `ScoredRow.judge_model`); falls through to the injected `Judge`'s `judge_model()` when unset. |
+| Minor | m8 — `RunCompleteHook` doc comment said it fired *after* `CompletionHook` on every run-end path, but `CompletionHook` only fires on the success path. | **Fixed in-session.** Doc comment in `crates/ork-agents/src/hooks.rs` now spells out: success → `CompletionHook` then `RunCompleteHook`; cancel/fatal/`tool_loop_exceeded` → `RunCompleteHook` only. |
+| Nit | n1 — `Sampling` / `ScorerSpec` are not `Serialize`. | **Acknowledged, deferred** to ADR-0055 (Studio) where the manifest projection lives. |
+| Nit | n2 — `glob` workspace dep declared in two crates. | **Acknowledged, kept** — both `ork-app` and `ork-eval` legitimately use the dep. |
+| Nit | n3 — Variant `ScorerSpec::Live` shares the lower-case identifier `live(...)` with the constructor. | **Acknowledged, kept** — Rust convention; `ScorerSpec::live(...)` is the documented constructor used in the ADR example. |
+| Nit | n4 — README ADR-0061 row added in this diff, unrelated to ADR-0054. | **Acknowledged, kept** as housekeeping; the 0061 ADR file already existed in the repo, only the index row was missing. |
+| Nit | n5 — `OrkEval::concurrency(n)` setter stored, never read. | **Acknowledged, deferred.** Sequential dispatch is sufficient for v1 datasets; parallel dispatch (`futures::stream::buffer_unordered`) lands with ADR-0057's CLI work. |
 
 ## Prior art / parity references
 

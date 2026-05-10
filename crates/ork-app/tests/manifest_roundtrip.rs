@@ -246,14 +246,14 @@ proptest! {
         }
         // Scorers reference an agent id; only attach when we registered that agent above.
         if toggles & 8 != 0 && (toggles & 1) != 0 {
+            let scorer = ork_eval::scorers::exact_match()
+                .expected_string(format!("sc-{tag:x}"))
+                .build();
             b = b.scorer(
                 ScorerTarget::Agent {
                     id: agent_id.clone(),
                 },
-                ScorerSpec {
-                    id: format!("sc-{tag:x}"),
-                    label: Some(format!("lbl-{tag:x}")),
-                },
+                ScorerSpec::offline(scorer),
             );
         }
         if toggles & 16 != 0 {
@@ -311,10 +311,11 @@ fn manifest_roundtrip_with_optionals() {
         .vectors(Vecs)
         .scorer(
             ScorerTarget::Agent { id: "alice".into() },
-            ScorerSpec {
-                id: "s1".into(),
-                label: Some("l".into()),
-            },
+            ScorerSpec::offline(
+                ork_eval::scorers::exact_match()
+                    .expected_string("s1")
+                    .build(),
+            ),
         )
         .observability(ObservabilityConfig {
             traces: true,

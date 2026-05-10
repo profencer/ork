@@ -96,7 +96,7 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | 1 | 0001 – 0009 | Foundations: ADR process, `Agent` port, A2A model, hybrid transport, discovery, peer delegation, remote agent client, A2A server, push notifications |
 | 2 | 0010 – 0017 | Substrate: MCP, native tool calling, multi-LLM router, generic gateways, embeds, artifacts, Web UI |
 | 3 | 0019 – 0023, 0034, 0047 | Production hardening: scheduling, security, RBAC, rollout, per-model profiles, rig as local-agent engine |
-| 4 | 0048 – 0060 | Code-first platform pivot: `OrkApp`, code-first DSLs (workflow, tool, agent), memory, scorers, Studio, REST+SSE server, `ork dev`/`build`/`start` CLI, per-tenant `OrkApp`, declarative workflow wire format, polyglot SDKs |
+| 4 | 0048 – 0061 | Code-first platform pivot: `OrkApp`, code-first DSLs (workflow, tool, agent), memory, scorers, Studio, REST+SSE server, `ork dev`/`build`/`start` CLI, per-tenant `OrkApp`, declarative workflow wire format, polyglot SDKs, mutable-workspace + edit/write/shell tool plane |
 | – | 0018, 0024 – 0033, 0035 – 0046 | Superseded — see Status column in the index below |
 
 ## Index
@@ -157,13 +157,14 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0051](0051-code-first-tool-dsl.md) | Code-first Tool DSL on `rig::Tool` with typed Args/Output | Accepted | 4 |
 | [0052](0052-code-first-agent-dsl.md) | Code-first Agent DSL on `rig::Agent` with structured outputs | Implemented | 4 |
 | [0053](0053-memory-working-and-semantic.md) | Memory: working memory + semantic recall, threads and resources | Implemented | 4 |
-| [0054](0054-live-scorers-and-eval-corpus.md) | Live scorers and offline eval corpus | Proposed | 4 |
+| [0054](0054-live-scorers-and-eval-corpus.md) | Live scorers and offline eval corpus | Implemented | 4 |
 | [0055](0055-studio-local-dev-ui.md) | Studio: local dev UI for chat, workflows, memory, traces, scorers | Proposed | 4 |
 | [0056](0056-auto-generated-rest-and-sse-surface.md) | Auto-generated REST + SSE server surface for agents and workflows | Proposed | 4 |
 | [0057](0057-ork-cli-dev-build-start.md) | `ork dev` / `ork build` / `ork start` CLI | Proposed | 4 |
 | [0058](0058-per-tenant-orkapp.md) | Per-tenant `OrkApp` and tenant-scoped catalog overlays | Proposed | 4 |
 | [0059](0059-declarative-workflow-wire-format.md) | Declarative workflow wire format, dynamic registration, and Rust loader | Proposed | 4 |
 | [0060](0060-ork-sdk-generate-and-reference-sdks.md) | `ork sdk generate` and reference TS / Go workflow SDKs | Proposed | 4 |
+| [0061](0061-mutable-workspace-and-edit-write-shell-tool-plane.md) | Mutable workspace + edit/write/shell tool plane | Proposed | 4 |
 
 ## Decision graph
 
@@ -337,4 +338,5 @@ Each ADR carries its own detailed `Prior art / parity references` section (or, f
 | [0058](0058-per-tenant-orkapp.md) | Auth0 / Temporal namespaces — per-tenant overlay on a shared catalog |
 | [0059](0059-declarative-workflow-wire-format.md) | Conductor / Argo Workflows JSON DSL; CEL for predicates |
 | [0060](0060-ork-sdk-generate-and-reference-sdks.md) | OpenAPI Generator (one schema → N clients); Drizzle / Prisma proxy-based emission |
+| [0061](0061-mutable-workspace-and-edit-write-shell-tool-plane.md) | Claude Code (Read/Edit/Write/Bash); Aider (per-file SHA + conflict diff); Cursor (sandbox + symlink-escape); ADRs 0028 / 0029 / 0030 (restored on the post-pivot substrate); `codebase-memory-mcp` |
 

@@ -8,6 +8,7 @@ use ork_common::error::OrkError;
 
 use crate::a2a::{AgentCard, AgentContext, AgentEvent, AgentId, AgentMessage, TaskId};
 use crate::ports::memory_store::MemoryStore;
+use crate::ports::scorer::RunCompleteHook;
 
 pub type AgentEventStream =
     Pin<Box<dyn Stream<Item = Result<AgentEvent, OrkError>> + Send + 'static>>;
@@ -75,4 +76,12 @@ pub trait Agent: Send + Sync {
     /// — implementations are expected to use a `OnceLock` or similar so
     /// repeated calls are absorbed.
     fn inject_memory(&self, _memory: Arc<dyn MemoryStore>) {}
+
+    /// ADR-0054 §`Hook surface extensions`: append a
+    /// [`RunCompleteHook`] to fire after every run on this agent.
+    /// Default no-op so non-`CodeAgent` impls (e.g. remote A2A
+    /// agents) compile without changes; the live-scoring sampler
+    /// installed by `OrkApp::build()` calls this once per agent that
+    /// matches a `Live`/`Both` scorer binding.
+    fn inject_run_complete_hook(&self, _hook: Arc<dyn RunCompleteHook>) {}
 }

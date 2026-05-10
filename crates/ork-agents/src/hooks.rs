@@ -15,6 +15,13 @@ use ork_core::a2a::AgentContext;
 use ork_core::ports::llm::ToolDescriptor;
 use serde_json::Value;
 
+/// ADR-0054 §`Hook surface extensions`: the richer post-run hook
+/// trait now lives in `ork-core` so the [`Agent`] port can declare
+/// `inject_run_complete_hook(...)` without a circular crate
+/// dependency. Re-exported here for source-compat with consumers
+/// importing `ork_agents::hooks::RunCompleteHook`.
+pub use ork_core::ports::scorer::RunCompleteHook;
+
 /// Decision returned by [`ToolHook::before`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolHookAction {
