@@ -52,6 +52,10 @@ include_dir = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 cargo_metadata = { workspace = true }
 which = { workspace = true }
+# ADR-0055: open Studio in the operator's default browser at `ork dev`
+# boot time, plus generate `ork build` bundle hashes.
+open = { workspace = true }
+sha2 = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }

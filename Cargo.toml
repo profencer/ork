@@ -24,11 +24,13 @@ members = [
     "crates/ork-storage",
     "crates/ork-webui",
     "crates/ork-eval",
+    "crates/ork-studio",
 ]
 exclude = [
     "demo/peer-agent",
     "demo/webhook-receiver",
     "demo/langgraph-agent",
+    "demo/studio-tour",
 ]
 
 [workspace.package]
@@ -62,6 +64,7 @@ ork-storage = { path = "crates/ork-storage" }
 ork-webui = { path = "crates/ork-webui" }
 ork-workflow = { path = "crates/ork-workflow" }
 ork-eval = { path = "crates/ork-eval" }
+ork-studio = { path = "crates/ork-studio" }
 
 # Web framework
 axum = "0.8"
@@ -154,6 +157,13 @@ tempfile = "3"
 
 # Web UI (ADR-0017): static SPA embed in ork-webui (`embed-spa` feature)
 include_dir = "0.7"
+
+# Studio (ADR-0055): embedded Vite/React SPA bundle in `ork-studio`.
+# ADR text specifies `rust-embed` (divergent from `ork-webui`'s `include_dir`).
+rust-embed = { version = "8", features = ["mime-guess"] }
+
+# Studio (ADR-0055) browser-open hook in `ork dev`.
+open = "5"
 
 # A2A remote agent (ADR 0007)
 eventsource-stream = "0.2"

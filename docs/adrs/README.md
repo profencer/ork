@@ -158,7 +158,7 @@ The ADRs are grouped into phases that mirror a sensible rollout order. Phase bou
 | [0052](0052-code-first-agent-dsl.md) | Code-first Agent DSL on `rig::Agent` with structured outputs | Implemented | 4 |
 | [0053](0053-memory-working-and-semantic.md) | Memory: working memory + semantic recall, threads and resources | Implemented | 4 |
 | [0054](0054-live-scorers-and-eval-corpus.md) | Live scorers and offline eval corpus | Implemented | 4 |
-| [0055](0055-studio-local-dev-ui.md) | Studio: local dev UI for chat, workflows, memory, traces, scorers | Proposed | 4 |
+| [0055](0055-studio-local-dev-ui.md) | Studio: local dev UI for chat, workflows, memory, traces, scorers | Implemented | 4 |
 | [0056](0056-auto-generated-rest-and-sse-surface.md) | Auto-generated REST + SSE server surface for agents and workflows | Accepted | 4 |
 | [0057](0057-ork-cli-dev-build-start.md) | `ork dev` / `ork build` / `ork start` CLI | Accepted | 4 |
 | [0058](0058-per-tenant-orkapp.md) | Per-tenant `OrkApp` and tenant-scoped catalog overlays | Proposed | 4 |

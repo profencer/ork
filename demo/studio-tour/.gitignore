@@ -1,0 +1,5 @@
+target/
+demo-studio-tour.db
+demo-studio-tour.db-shm
+demo-studio-tour.db-wal
+.env

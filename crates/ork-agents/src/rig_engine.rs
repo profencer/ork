@@ -156,6 +156,28 @@ pub(crate) fn status_update_text(
     })
 }
 
+/// ADR-0055 §`Chat panel` (AC #5): emit a `tool_call` SSE event when
+/// the agent decides to invoke a tool, so Studio renders the chip on
+/// the panel. The auto-router's SSE encoder (`ork_api::sse::encoder`)
+/// maps a `TaskEvent::Message` carrying a `Part::Data { kind:
+/// "tool_call", … }` to `event: tool_call`.
+pub(crate) fn tool_call_event(
+    task_id: ork_a2a::TaskId,
+    call_id: &str,
+    name: &str,
+    args: &serde_json::Value,
+) -> AgentEvent {
+    let data = serde_json::json!({
+        "kind": "tool_call",
+        "id": call_id,
+        "name": name,
+        "args": args,
+    });
+    let mut msg = AgentMessage::new(Role::Agent, vec![Part::Data { data, metadata: None }]);
+    msg.task_id = Some(task_id);
+    AgentEvent::Message(msg)
+}
+
 pub(crate) struct OrkToolDyn {
     pub(crate) tool: Arc<dyn ToolDef>,
     pub(crate) ctx: AgentContext,
@@ -906,8 +928,22 @@ async fn run_rig_consumer(
                                         .await;
                                 }
                             }
-                            StreamedAssistantContent::ToolCall { .. }
-                            | StreamedAssistantContent::ToolCallDelta { .. }
+                            StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                                // ADR-0055 AC #5: surface the tool call to
+                                // the SSE wire so Studio's Chat panel
+                                // renders the chip. The actual invocation
+                                // is owned by rig's tool wrapper above; we
+                                // only mirror the event onto the stream.
+                                let _ = tx
+                                    .send(Ok(tool_call_event(
+                                        task_id,
+                                        &tool_call.id,
+                                        &tool_call.function.name,
+                                        &tool_call.function.arguments,
+                                    )))
+                                    .await;
+                            }
+                            StreamedAssistantContent::ToolCallDelta { .. }
                             | StreamedAssistantContent::Final(_) => {}
                             StreamedAssistantContent::Reasoning(_)
                             | StreamedAssistantContent::ReasoningDelta { .. }

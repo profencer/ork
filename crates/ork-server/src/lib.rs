@@ -34,7 +34,17 @@ impl Server for AxumServer {
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        let router = ork_api::router_for(&app, config.as_ref());
+        // ADR-0056: auto-generated REST + SSE surface.
+        let mut router = ork_api::router_for(&app, config.as_ref());
+
+        // ADR-0055: developer Studio (`/studio`, `/studio/api/*`).
+        // `ork_studio::router(...)` returns `None` when
+        // `ServerConfig::studio == Disabled`, so production deployments
+        // pay no cost. The non-loopback guard runs in
+        // `OrkApp::serve()` before we get here.
+        if let Some(studio) = ork_studio::router(&app, config.as_ref()) {
+            router = router.merge(studio);
+        }
 
         let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;

@@ -1,6 +1,6 @@
 # 0055 — Studio: local dev UI for chat, workflows, memory, traces, scorers
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Date:** 2026-05-01
 - **Deciders:** ork core
 - **Phase:** 4
@@ -312,7 +312,21 @@ auth shape if Studio is ever exposed beyond local.
 
 | Severity | Finding | Resolution |
 | -------- | ------- | ---------- |
-| | | |
+| Major (deferred) | M1 — `ork dev` boot does not generate-and-print a Studio bearer token. `StudioAuth`, the redacted `Serialize` shim, the constant-time `matches`, and `require_studio_token` middleware all ship, but `crates/ork-cli/src/dev/studio.rs` only opens a browser. The v1 default is no-auth on loopback (per ADR §`Authentication`); the non-loopback `EnabledWithAuth(...)` arm is wired but the CLI never builds one. | Acknowledged, deferred. Follow-up ADR will (a) generate a token on `ork dev` boot when the operator opts into a non-loopback bind, (b) print it once to stdout, (c) pass it through env to the user binary's `ServerConfig::studio = EnabledWithAuth(...)`. The middleware is in place; only the CLI plumbing remains. |
+| Major (deferred) | M2 — Traces + Logs panels (AC #5) ship as `501 Not Implemented` with a structured envelope (`crates/ork-studio/src/routes/deferred.rs`). The observability/OTel ingestion ADR referenced in §`Consequences` has not landed (the `0058` slot was reassigned to per-tenant OrkApp before observability was authored); rendering empty-state would commit data shapes the future observability ADR may revise. v1 ships 6 panels: Overview, Chat, Workflows, Memory, Scorers, Evals. | Acknowledged, deferred to a future observability ADR. Follow-up adds the OTel + log ingestion sinks and Studio's panel rendering on top. |
+| Major (deferred) | M3 — `POST /studio/api/evals/run` accepts an arbitrary filesystem `dataset` path (`crates/ork-studio/src/routes/evals.rs:36`) and writes `studio-eval-report.json` next to it. v1 default is loopback-only so the footgun is bounded; once `EnabledWithAuth(...)` deploys beyond loopback, an authenticated caller can read any file the server process can read. | Acknowledged, deferred to the same follow-up ADR as M1. Plan: introduce a `dataset_root: PathBuf` on `StudioConfig::EnabledWithAuth(...)` and reject paths that don't canonicalise inside it. |
+| Minor (fixed in-session) | m1 — Unused `[dependencies]` (`rand`, `tokio-stream`, `futures`, `schemars`, `secrecy`, `tower-http`, `thiserror`, `tracing`). | Removed from `crates/ork-studio/Cargo.toml`; `secrecy` retained as a `[dev-dependencies]` for the loopback-guard test. |
+| Minor (acknowledged) | m2 — `ServerConfig::default()` reads `ORK_DEV` (process-global). A test that calls `std::env::set_var("ORK_DEV", "1")` in-process would flip every parallel `Default`. | Doc-comment warning added in `crates/ork-app/src/types.rs` `Default for ServerConfig`. v1 trades the surprise for the ergonomic of "user binary needs no extra code under `ork dev`"; a future ADR can move the env read into an explicit `ServerConfig::for_dev()` constructor. |
+| Minor (deferred) | m3 — `memory_read_scope` / `memory_write_scope` duplicated in `crates/ork-studio/src/routes/memory.rs:238` and `crates/ork-api/src/routes/auto/memory.rs:28`. ADR-0021 vocabulary must stay byte-for-byte aligned. | Acknowledged, deferred. Promotion to `ork-common::auth` next to `agent_invoke_scope` belongs to a small follow-up that also picks up the other per-resource scope helpers; tracking on the same dev-server / auth follow-up. |
+| Minor (fixed in-session) | m4 — `[dev-dependencies]` redeclared `async-trait` already in `[dependencies]`. | Removed redundant entry. |
+| Minor (fixed in-session) | m5 — `studio_auth_layer` was a no-op pass-through. | Deleted; the public surface is `auth::require_studio_token` directly. |
+| Minor (fixed in-session) | m6 — `embed::serve_path` rejected any path containing `..` substring (over-broad for legitimate hash-suffix asset names). | Changed to a path-segment check: reject only when an exact segment equals `..`. |
+| Minor (fixed in-session) | m7 — `StudioAuth::new` accepted empty tokens; an `Authorization: Bearer ` header with the trailing space stripped would compare equal to an empty configured token. | `StudioAuth::new` now returns `Result<Self, &'static str>` and rejects empty tokens. `Deserialize` propagates the error via `serde::de::Error::custom`. |
+| Minor (fixed in-session) | m8 — `hash_studio_sources` keyed paths by `OsStr::as_encoded_bytes` (diverges across macOS/Linux/Windows). | Refactored to hash the relative-to-`web/` path string with `/` separators so the hash is platform-independent. |
+| Nit (acknowledged) | n1 — `tests/api_envelope.rs` mounts the studio router with a hand-injected `Extension(TenantId)` rather than going through `ork-api`'s `tenant_middleware`. | Acknowledged. The follow-up reverse-proxy ADR's e2e smoke (boot `ork-server::AxumServer`, hit `/studio/api/manifest`) will close the integration gap. |
+| Nit (acknowledged) | n2 — Test helper rebuilds `ServerConfig` from `manifest().server.{host,port}` because `OrkApp` doesn't expose its `ServerConfig`. | Acknowledged. Adding `OrkApp::server_config(&self) -> &Arc<ServerConfig>` is a one-line change tracked for the same follow-up. |
+| Nit (acknowledged) | n3 — Studio's `EchoRunner` (`crates/ork-studio/src/routes/evals.rs:150`) duplicates `crates/ork-cli/src/eval.rs:105`. | Acknowledged. A small future refactor exports an `EchoRunner` from `ork-eval` so both consumers share one impl. |
+| Nit (fixed in-session) | n4 — `MemoryQuery::recall_query` short-circuits without docs. | Doc-comment added next to the field. |
 
 ## Prior art / parity references
 

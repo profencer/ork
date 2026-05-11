@@ -2732,6 +2732,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-docker"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
+name = "is-wsl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
+dependencies = [
+ "is-docker",
+ "once_cell",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3410,6 +3429,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "open"
+version = "5.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f3bab717c29a857abf75fcef718d441ec7cb2725f937343c734740a985d37fd"
+dependencies = [
+ "is-wsl",
+ "libc",
+ "pathdiff",
+]
+
+[[package]]
 name = "openapiv3"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3597,6 +3627,7 @@ dependencies = [
  "ork-tool",
  "ork-workflow",
  "proptest",
+ "secrecy",
  "serde",
  "serde_json",
  "tokio",
@@ -3630,6 +3661,7 @@ dependencies = [
  "include_dir",
  "nix 0.29.0",
  "notify-debouncer-mini",
+ "open",
  "ork-agents",
  "ork-app",
  "ork-common",
@@ -3645,6 +3677,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tracing",
@@ -3969,6 +4002,7 @@ dependencies = [
  "ork-api",
  "ork-app",
  "ork-common",
+ "ork-studio",
  "tokio",
  "tracing",
 ]
@@ -4001,6 +4035,33 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "ork-studio"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "http-body-util",
+ "libsql",
+ "mime_guess",
+ "ork-a2a",
+ "ork-api",
+ "ork-app",
+ "ork-common",
+ "ork-core",
+ "ork-eval",
+ "ork-memory",
+ "ork-security",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
  "uuid",
 ]
 
@@ -5046,6 +5107,41 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tracing",
+]
+
+[[package]]
+name = "rust-embed"
+version = "8.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04113cb9355a377d83f06ef1f0a45b8ab8cd7d8b1288160717d66df5c7988d27"
+dependencies = [
+ "rust-embed-impl",
+ "rust-embed-utils",
+ "walkdir",
+]
+
+[[package]]
+name = "rust-embed-impl"
+version = "8.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da0902e4c7c8e997159ab384e6d0fc91c221375f6894346ae107f47dd0f3ccaa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rust-embed-utils",
+ "syn",
+ "walkdir",
+]
+
+[[package]]
+name = "rust-embed-utils"
+version = "8.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bcdef0be6fe7f6fa333b1073c949729274b05f123a0ad7efcb8efd878e5c3b1"
+dependencies = [
+ "mime_guess",
+ "sha2 0.10.9",
+ "walkdir",
 ]
 
 [[package]]

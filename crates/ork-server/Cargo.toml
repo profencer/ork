@@ -9,5 +9,7 @@ axum.workspace = true
 ork-api.workspace = true
 ork-app.workspace = true
 ork-common.workspace = true
+# ADR-0055: mount `/studio` and `/studio/api/*` next to the auto router.
+ork-studio = { workspace = true }
 tokio = { workspace = true, features = ["sync", "macros", "net", "time", "rt"] }
 tracing.workspace = true

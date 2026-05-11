@@ -1,0 +1,47 @@
+[package]
+name = "ork-studio"
+version.workspace = true
+edition.workspace = true
+
+# ADR-0055 §`Mount mechanics`: Studio is the developer dashboard, embedded
+# as a Vite + React SPA via `rust-embed`. The crate sits at the gateway
+# boundary alongside `ork-api` / `ork-webui`; the hexagonal rule in
+# AGENTS.md §3 forbids domain crates (`ork-core` / `ork-agents` /
+# `ork-workflow` / `ork-tool` / `ork-memory` / `ork-eval`) from depending
+# on it.
+
+[features]
+default = ["embed-spa"]
+# Embed `web/dist` at compile time. Disable for tests that don't need the
+# bundle (the binary build path always wants it).
+embed-spa = []
+
+[dependencies]
+ork-app = { workspace = true }
+ork-api = { workspace = true }
+ork-eval = { workspace = true }
+ork-common = { workspace = true }
+ork-core = { workspace = true }
+ork-a2a = { workspace = true }
+ork-security = { workspace = true }
+
+axum = { workspace = true }
+tokio = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+rust-embed = { workspace = true }
+mime_guess = { workspace = true }
+
+uuid = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tokio = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+tempfile = { workspace = true }
+ork-memory = { workspace = true, features = ["libsql"] }
+libsql = { workspace = true }

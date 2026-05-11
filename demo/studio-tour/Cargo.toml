@@ -1,0 +1,48 @@
+# Post-pivot showcase: a 2-agent, 2-tool, 1-workflow OrkApp that boots
+# Studio (ADR-0055) at http://127.0.0.1:4111/studio so a reviewer can
+# drive the six v1 panels (Overview / Chat / Workflows / Memory /
+# Scorers / Evals) against a real LLM in a single `cargo run`.
+#
+# Lives outside the workspace (see `exclude` in the root Cargo.toml) so
+# the post-pivot demo is self-contained and never blocks
+# `cargo build --workspace`.
+
+[package]
+name = "demo-studio-tour"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "demo-studio-tour"
+path = "src/main.rs"
+
+[dependencies]
+ork-a2a = { path = "../../crates/ork-a2a" }
+ork-agents = { path = "../../crates/ork-agents" }
+ork-api = { path = "../../crates/ork-api" }
+ork-app = { path = "../../crates/ork-app" }
+ork-common = { path = "../../crates/ork-common" }
+ork-core = { path = "../../crates/ork-core" }
+ork-eval = { path = "../../crates/ork-eval" }
+ork-llm = { path = "../../crates/ork-llm" }
+ork-memory = { path = "../../crates/ork-memory", features = ["libsql"] }
+ork-studio = { path = "../../crates/ork-studio" }
+ork-tool = { path = "../../crates/ork-tool" }
+ork-workflow = { path = "../../crates/ork-workflow" }
+
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tower = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = { version = "0.8", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+async-trait = "0.1"
+anyhow = "1"
+tracing = "0.1"
+# Studio-tour: the workflow's final step uses `tracing::info!` to
+# surface the run result to the demo binary's stderr — see ADR-0056 M1
+# deferral commentary in src/workflows.rs.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

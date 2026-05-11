@@ -110,6 +110,18 @@ impl OrkAppBuilder {
         self
     }
 
+    /// Variant accepting an already-trait-objected
+    /// [`Arc<dyn MemoryStore>`]. Convenient when the caller obtained the
+    /// store from `ork_memory::Memory::libsql(...).open().await` —
+    /// which returns `Arc<dyn MemoryStore>` directly — without forcing
+    /// them to wrap it in an adapter struct just to satisfy the
+    /// generic [`OrkAppBuilder::memory`] bound.
+    #[must_use]
+    pub fn memory_arc(mut self, m: Arc<dyn MemoryStore>) -> Self {
+        self.memory = Some(m);
+        self
+    }
+
     pub fn storage<S: KvStorage + 'static>(mut self, s: S) -> Self {
         self.storage = Some(Arc::new(s));
         self

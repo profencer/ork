@@ -172,6 +172,13 @@ impl OrkApp {
             return Ok(ServeHandle::inspect_only());
         }
 
+        // ADR-0055 AC #4: refuse to start Studio on a non-loopback bind
+        // unless `EnabledWithAuth(...)` is set. The check runs before any
+        // listener is opened so an operator who accidentally binds
+        // `0.0.0.0` with Studio enabled sees a clear error rather than
+        // exposing the dashboard.
+        Self::guard_studio_bind(&self.inner.server_config)?;
+
         self.resume_pending_workflows_on_startup().await;
         self.spawn_cron_scheduler_if_needed();
 
@@ -193,6 +200,49 @@ impl OrkApp {
     fn should_inspect_manifest() -> bool {
         std::env::args().any(|a| a == "--ork-inspect-manifest")
             || std::env::var_os("ORK_INSPECT_MANIFEST").is_some()
+    }
+
+    /// ADR-0055 AC #4 — Studio on a non-loopback bind must require auth.
+    /// `Disabled` is always fine. `EnabledWithAuth` is always fine.
+    /// `Enabled` is only allowed on loopback hosts (`127.0.0.0/8`, `::1`,
+    /// `localhost`).
+    fn guard_studio_bind(cfg: &crate::types::ServerConfig) -> Result<(), OrkError> {
+        use crate::types::StudioConfig;
+        match &cfg.studio {
+            StudioConfig::Disabled | StudioConfig::EnabledWithAuth(_) => Ok(()),
+            StudioConfig::Enabled => {
+                if Self::is_loopback_host(&cfg.host) {
+                    Ok(())
+                } else {
+                    Err(OrkError::Configuration {
+                        message: format!(
+                            "studio refuses non-loopback bind without auth (host={}, ADR-0055 §`Mount mechanics`)",
+                            cfg.host
+                        ),
+                    })
+                }
+            }
+        }
+    }
+
+    fn is_loopback_host(host: &str) -> bool {
+        // Accept the common spellings: literal `localhost`, IPv6
+        // loopback, and any `127.0.0.0/8` IPv4 address. The
+        // `parse::<IpAddr>()` round-trip handles both `127.0.0.1`
+        // (loopback) and bracketed IPv6 (`::1`).
+        if host.eq_ignore_ascii_case("localhost") {
+            return true;
+        }
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            return ip.is_loopback();
+        }
+        // Brackets around IPv6: `[::1]:4111` strips brackets by the time
+        // we see the host slice, but defend against either spelling.
+        let stripped = host.trim_start_matches('[').trim_end_matches(']');
+        stripped
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
     }
 
     async fn resume_pending_workflows_on_startup(&self) {

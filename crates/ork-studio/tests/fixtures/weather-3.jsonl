@@ -1,0 +1,3 @@
+{"id":"ex-1","input":{"prompt":"sunny","answer":"sunny"},"expected":{"answer":"sunny"}}
+{"id":"ex-2","input":{"prompt":"cloudy","answer":"cloudy"},"expected":{"answer":"cloudy"}}
+{"id":"ex-3","input":{"prompt":"snowy","answer":"rainy"},"expected":{"answer":"snowy"}}

@@ -270,10 +270,20 @@ struct OpenAiChoice {
     finish_reason: Option<String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 struct OpenAiUsage {
+    // ADR-0012 §`Tolerant usage parsing`: streaming providers (MiniMax,
+    // some Anthropic mirrors, DeepSeek tool-call frames) emit interim
+    // chunks where `usage` is present but only carries
+    // `completion_tokens`, or carries a numeric `0` placeholder, or
+    // omits `total_tokens`. Treat every field as optional and
+    // default-zero so a partial usage object never bricks the whole
+    // stream.
+    #[serde(default)]
     prompt_tokens: u32,
+    #[serde(default)]
     completion_tokens: u32,
+    #[serde(default)]
     total_tokens: u32,
 }
 
